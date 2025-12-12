@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.log
+ollama.log
+jobs.db
+uploads/
+output/
+input/
+.DS_Store
+.claude/
