@@ -958,7 +958,6 @@
           <div class="panel-head">
             <div>
               <h2 class="panel-title">Whisper GPU</h2>
-              <p class="panel-desc">3초마다 사용량을 갱신합니다.</p>
             </div>
             <span id="gpu-state" class="pill">확인 중</span>
           </div>
@@ -1659,7 +1658,7 @@
       if (state.jobsTimer) clearInterval(state.jobsTimer);
       if (state.gpuTimer) clearInterval(state.gpuTimer);
       state.jobsTimer = setInterval(fetchJobs, 3000);
-      state.gpuTimer = setInterval(fetchGpuStatus, 3000);
+      state.gpuTimer = setInterval(fetchGpuStatus, 1000);
     }
 
     async function init() {

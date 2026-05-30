@@ -2147,7 +2147,7 @@ DASHBOARD_HTML = """
     function startGpuMonitor() {
       if (gpuTimer) clearInterval(gpuTimer);
       fetchGpuStatus();
-      gpuTimer = setInterval(fetchGpuStatus, 3000);
+      gpuTimer = setInterval(fetchGpuStatus, 1000);
     }
 
     // 현재 렌더링된 작업들의 상태를 저장
