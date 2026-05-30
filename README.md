@@ -19,23 +19,28 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-ChatMock 서버를 먼저 실행합니다.
+한 번에 실행하려면 아래 스크립트를 사용합니다. `.env`가 없으면 자동 생성하고, 가상환경과 의존성도 준비한 뒤 ChatMock과 NoteCraft를 함께 실행합니다.
 
 ```bash
-chatmock serve --host 127.0.0.1 --port 8000
+chmod +x scripts/*.sh
+scripts/run.sh
 ```
 
-개발 환경 실행:
+브라우저에서 `http://서버주소:9002/login`으로 접속합니다. 첫 실행 때 터미널에 초기 관리자 비밀번호가 출력되고, 이후에는 `.env`의 `APP_ADMIN_PASSWORD`를 사용합니다.
+
+검증 스크립트:
 
 ```bash
-export APP_ADMIN_USERNAME=yes2310
-export APP_ADMIN_PASSWORD='change-this-password'
-export LLM_BASE_URL=http://127.0.0.1:8000/v1
-export LLM_MODEL=gpt-5.4
-uvicorn app:app --host 0.0.0.0 --port 9002
+scripts/check.sh
 ```
 
-브라우저에서 `http://서버주소:9002/login`으로 접속합니다.
+수동으로 나눠 실행해야 할 때:
+
+```bash
+source .env
+chatmock serve --host "$CHATMOCK_HOST" --port "$CHATMOCK_PORT"
+uvicorn app:app --host "$APP_HOST" --port "$APP_PORT"
+```
 
 `APP_ADMIN_PASSWORD`는 개발 환경에서도 필수입니다. 기본 관리자 비밀번호는 저장소에 포함하지 않습니다.
 
@@ -64,6 +69,11 @@ export MAX_UPLOAD_BYTES=2147483648
 | `APP_COOKIE_SECURE` | 운영 `1`, 개발 `0` | HTTPS 전용 세션 쿠키 여부 |
 | `SESSION_TTL_SECONDS` | `604800` | 로그인 세션 유지 시간 |
 | `MAX_UPLOAD_BYTES` | `2147483648` | 업로드 파일 최대 크기 |
+| `APP_HOST` | `0.0.0.0` | 웹 서버 바인딩 주소 |
+| `APP_PORT` | `9002` | 웹 서버 포트 |
+| `CHATMOCK_HOST` | `127.0.0.1` | 자동 실행할 ChatMock 주소 |
+| `CHATMOCK_PORT` | `8000` | 자동 실행할 ChatMock 포트 |
+| `AUTO_START_CHATMOCK` | `1` | `scripts/run.sh`에서 ChatMock 자동 실행 여부 |
 | `LLM_BASE_URL` | `http://127.0.0.1:8000/v1` | ChatMock/OpenAI 호환 API 주소 |
 | `LLM_MODEL` | `gpt-5.4` | 기본 요약 모델 |
 | `WHISPER_MODEL` | `large-v3` | Whisper 모델 |
