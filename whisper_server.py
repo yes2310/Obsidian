@@ -19,15 +19,19 @@ SUPPORTED_INPUT_EXTS = {".mp4", ".mkv", ".mov", ".avi", ".mp3", ".wav", ".m4a"}
 
 
 def get_gpu_info():
+    if not shutil.which("nvidia-smi"):
+        raise RuntimeError("nvidia-smi command not found. CUDA GPU 환경에서 실행하세요.")
     result = subprocess.run(
         ["nvidia-smi", "--query-gpu=index,name,memory.total,memory.free", 
          "--format=csv,noheader,nounits"],
-        capture_output=True, text=True
+        capture_output=True, text=True, check=True
     )
     gpus = []
     for line in result.stdout.strip().split('\n'):
         if line:
             parts = [p.strip() for p in line.split(',')]
+            if len(parts) < 4:
+                continue
             gpus.append({
                 "index": int(parts[0]),
                 "name": parts[1],
@@ -98,6 +102,9 @@ def select_gpus(gpus: list[dict], gpu_ids_value: str | None, gpu_count: int | No
         raise RuntimeError("nvidia-smi에서 사용 가능한 GPU를 찾지 못했습니다.")
 
     idx_to_gpu = {g["index"]: g for g in gpus}
+    gpu_ids_value = (gpu_ids_value or "").strip()
+    if gpu_ids_value.lower() in {"", "auto", "all"}:
+        gpu_ids_value = ""
     if gpu_ids_value:
         wanted = parse_gpu_ids(gpu_ids_value)
     else:

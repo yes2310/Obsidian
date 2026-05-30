@@ -1,12 +1,17 @@
 .venv/
+.env
+.env.*
+!.env.example
 __pycache__/
 *.pyc
 *.pyo
 *.log
+*.pdf
 ollama.log
 jobs.db
 uploads/
 output/
 input/
+vault/지식창고/
 .DS_Store
 .claude/
