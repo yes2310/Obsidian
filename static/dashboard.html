@@ -1,0 +1,1677 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NoteCraft</title>
+  <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --surface: #ffffff;
+      --surface-soft: #f8fafc;
+      --line: #e8edf3;
+      --line-strong: #d8e0ea;
+      --text: #191f28;
+      --text-subtle: #4e5968;
+      --text-muted: #8b95a1;
+      --blue: #3182f6;
+      --blue-dark: #1b64da;
+      --blue-soft: #eaf3ff;
+      --green: #1bc47d;
+      --green-soft: #e8f8f1;
+      --yellow: #ffb020;
+      --yellow-soft: #fff6df;
+      --red: #f04452;
+      --red-soft: #fff0f1;
+      --shadow: 0 18px 45px rgba(25, 31, 40, 0.07);
+      --radius: 8px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", "Apple SD Gothic Neo", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at top right, rgba(49, 130, 246, 0.11), transparent 30rem),
+        var(--bg);
+      color: var(--text);
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+    }
+
+    button {
+      min-height: 44px;
+      border: 0;
+      border-radius: var(--radius);
+      background: var(--blue);
+      color: #fff;
+      cursor: pointer;
+      font-weight: 700;
+      transition: background 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
+    }
+
+    button:hover:not(:disabled) {
+      background: var(--blue-dark);
+      transform: translateY(-1px);
+      box-shadow: 0 8px 20px rgba(49, 130, 246, 0.22);
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.45;
+    }
+
+    input,
+    select {
+      width: 100%;
+      min-height: 46px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      color: var(--text);
+      padding: 0 14px;
+      outline: none;
+      transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+    }
+
+    input:focus,
+    select:focus {
+      border-color: var(--blue);
+      box-shadow: 0 0 0 4px rgba(49, 130, 246, 0.14);
+    }
+
+    input[type="file"] {
+      display: none;
+    }
+
+    .page {
+      width: min(1180px, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 28px 0 56px;
+    }
+
+    .ghost-btn,
+    .icon-btn {
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--line);
+      box-shadow: none;
+    }
+
+    .ghost-btn:hover:not(:disabled),
+    .icon-btn:hover:not(:disabled) {
+      background: var(--surface-soft);
+      color: var(--text);
+      border-color: var(--line-strong);
+      box-shadow: none;
+    }
+
+    .icon-btn {
+      width: 44px;
+      padding: 0;
+      display: inline-grid;
+      place-items: center;
+    }
+
+    .btn-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .btn-label {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 0 16px;
+    }
+
+    .btn-label svg,
+    .icon-btn svg,
+    .chip svg {
+      width: 18px;
+      height: 18px;
+      stroke-width: 2.2;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.75fr);
+      gap: 18px;
+      padding: 42px 0 20px;
+      align-items: stretch;
+    }
+
+    .hero-copy {
+      padding: 10px 0;
+      min-width: 0;
+    }
+
+    .eyebrow {
+      margin: 0 0 12px;
+      color: var(--blue);
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(36px, 5.1vw, 64px);
+      line-height: 1.08;
+      letter-spacing: 0;
+    }
+
+    .hero-text {
+      margin: 18px 0 0;
+      max-width: 640px;
+      color: var(--text-subtle);
+      font-size: 18px;
+    }
+
+    .health-card {
+      align-self: end;
+      display: grid;
+      gap: 14px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255, 255, 255, 0.78);
+      box-shadow: var(--shadow);
+    }
+
+    .health-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      color: var(--text-subtle);
+      font-size: 14px;
+    }
+
+    .health-row strong {
+      color: var(--text);
+      font-size: 15px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 30px;
+      padding: 0 10px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      color: var(--text-subtle);
+      background: var(--surface);
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .pill::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--text-muted);
+    }
+
+    .pill.ok {
+      color: #0c9b61;
+      background: var(--green-soft);
+      border-color: rgba(27, 196, 125, 0.3);
+    }
+
+    .pill.ok::before { background: var(--green); }
+
+    .pill.warn {
+      color: #a96900;
+      background: var(--yellow-soft);
+      border-color: rgba(255, 176, 32, 0.35);
+    }
+
+    .pill.warn::before { background: var(--yellow); }
+
+    .pill.bad {
+      color: var(--red);
+      background: var(--red-soft);
+      border-color: rgba(240, 68, 82, 0.25);
+    }
+
+    .pill.bad::before { background: var(--red); }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin: 14px 0 22px;
+    }
+
+    .stat-card,
+    .panel,
+    .job-card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: 0 8px 26px rgba(25, 31, 40, 0.04);
+    }
+
+    .stat-card {
+      padding: 18px;
+    }
+
+    .stat-label {
+      color: var(--text-muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .stat-value {
+      margin-top: 8px;
+      font-size: 29px;
+      line-height: 1;
+      font-weight: 900;
+    }
+
+    .workspace-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(360px, 0.72fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .panel {
+      padding: 20px;
+      min-width: 0;
+    }
+
+    .panel + .panel {
+      margin-top: 18px;
+    }
+
+    .panel-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    .panel-title {
+      margin: 0;
+      font-size: 19px;
+      line-height: 1.25;
+    }
+
+    .panel-desc {
+      margin: 4px 0 0;
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+
+    .upload-zone {
+      display: grid;
+      place-items: center;
+      min-height: 190px;
+      border: 1.5px dashed var(--line-strong);
+      border-radius: var(--radius);
+      background: linear-gradient(180deg, #fbfdff, #f8fafc);
+      cursor: pointer;
+      text-align: center;
+      padding: 24px;
+      transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
+    }
+
+    .upload-zone:hover,
+    .upload-zone.dragging {
+      border-color: var(--blue);
+      background: var(--blue-soft);
+      transform: translateY(-1px);
+    }
+
+    .upload-icon {
+      width: 48px;
+      height: 48px;
+      display: grid;
+      place-items: center;
+      margin: 0 auto 14px;
+      border-radius: 8px;
+      color: var(--blue);
+      background: var(--blue-soft);
+    }
+
+    .upload-icon svg {
+      width: 25px;
+      height: 25px;
+    }
+
+    .upload-main {
+      font-size: 16px;
+      font-weight: 800;
+    }
+
+    .upload-sub {
+      margin-top: 6px;
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+
+    .selected-file {
+      margin-top: 14px;
+      padding: 13px 14px;
+      border-radius: var(--radius);
+      background: var(--surface-soft);
+      color: var(--text-subtle);
+      font-size: 14px;
+      word-break: break-all;
+    }
+
+    .status-banner {
+      display: none;
+      align-items: flex-start;
+      gap: 10px;
+      margin-top: 14px;
+      padding: 13px 14px;
+      border-radius: var(--radius);
+      border: 1px solid rgba(49, 130, 246, 0.2);
+      background: var(--blue-soft);
+      color: var(--blue-dark);
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .status-banner.show {
+      display: flex;
+    }
+
+    .status-banner.bad {
+      border-color: rgba(240, 68, 82, 0.22);
+      background: var(--red-soft);
+      color: var(--red);
+    }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+    }
+
+    .gpu-stack {
+      display: grid;
+      gap: 12px;
+    }
+
+    .gpu-card {
+      padding: 16px;
+      border-radius: var(--radius);
+      border: 1px solid var(--line);
+      background: var(--surface-soft);
+    }
+
+    .gpu-card-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .gpu-name {
+      color: var(--text);
+      font-size: 15px;
+      font-weight: 900;
+      line-height: 1.35;
+    }
+
+    .gpu-index {
+      margin-top: 2px;
+      color: var(--text-muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .gpu-util {
+      color: var(--blue);
+      font-size: 28px;
+      line-height: 1;
+      font-weight: 900;
+    }
+
+    .meter {
+      height: 8px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #e7edf5;
+    }
+
+    .meter-fill {
+      height: 100%;
+      width: 0%;
+      border-radius: inherit;
+      background: var(--blue);
+      transition: width 0.25s ease;
+    }
+
+    .gpu-metrics {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .metric-label {
+      color: var(--text-muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .metric-value {
+      margin-top: 3px;
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 800;
+      word-break: break-word;
+    }
+
+    .gpu-meta {
+      margin-top: 12px;
+      color: var(--text-muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .toolbar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 170px auto;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .job-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .empty-state {
+      display: grid;
+      place-items: center;
+      min-height: 220px;
+      padding: 34px;
+      text-align: center;
+      color: var(--text-muted);
+      border: 1px dashed var(--line-strong);
+      border-radius: var(--radius);
+      background: var(--surface-soft);
+    }
+
+    .empty-state strong {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--text-subtle);
+    }
+
+    .job-card {
+      padding: 18px;
+      transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+    }
+
+    .job-card:hover {
+      border-color: var(--line-strong);
+      box-shadow: var(--shadow);
+      transform: translateY(-1px);
+    }
+
+    .job-top {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: start;
+    }
+
+    .job-title {
+      margin: 0;
+      font-size: 16px;
+      line-height: 1.35;
+      word-break: break-word;
+    }
+
+    .job-meta {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+      color: var(--text-muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .job-actions {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      min-height: 34px;
+      padding: 0 10px;
+      border-radius: var(--radius);
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--text-subtle);
+      font-size: 12px;
+      font-weight: 800;
+      box-shadow: none;
+    }
+
+    .chip:hover:not(:disabled) {
+      color: var(--text);
+      background: var(--surface-soft);
+      box-shadow: none;
+    }
+
+    .progress-steps {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 16px;
+    }
+
+    .step {
+      min-height: 42px;
+      padding: 10px 12px;
+      border-radius: var(--radius);
+      background: var(--surface-soft);
+      color: var(--text-muted);
+      font-size: 12px;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .step-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--line-strong);
+      flex: 0 0 auto;
+    }
+
+    .step.done {
+      color: #0c9b61;
+      background: var(--green-soft);
+    }
+
+    .step.done .step-dot { background: var(--green); }
+
+    .step.active {
+      color: var(--blue-dark);
+      background: var(--blue-soft);
+    }
+
+    .step.active .step-dot {
+      background: var(--blue);
+      box-shadow: 0 0 0 4px rgba(49, 130, 246, 0.12);
+    }
+
+    .job-error {
+      margin-top: 14px;
+      padding: 13px 14px;
+      border-radius: var(--radius);
+      background: var(--red-soft);
+      color: var(--red);
+      font-size: 13px;
+      font-weight: 700;
+      word-break: break-word;
+    }
+
+    .note-panel {
+      margin-top: 14px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fbfcff;
+      overflow: hidden;
+    }
+
+    .note-panel[hidden] {
+      display: none;
+    }
+
+    .note-content {
+      max-height: 520px;
+      overflow: auto;
+      padding: 18px;
+      font-size: 15px;
+      line-height: 1.72;
+    }
+
+    .note-content h1,
+    .note-content h2,
+    .note-content h3 {
+      line-height: 1.25;
+      margin: 22px 0 10px;
+    }
+
+    .note-content h1 { font-size: 24px; }
+    .note-content h2 { font-size: 20px; }
+    .note-content h3 { font-size: 17px; }
+
+    .note-content p {
+      margin: 10px 0;
+    }
+
+    .note-content ul,
+    .note-content ol {
+      padding-left: 22px;
+    }
+
+    .note-content code {
+      padding: 2px 5px;
+      border-radius: 5px;
+      background: #eef2f7;
+      color: var(--red);
+    }
+
+    .note-content pre {
+      padding: 14px;
+      overflow: auto;
+      border-radius: var(--radius);
+      background: #eef2f7;
+    }
+
+    .files-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 14px;
+    }
+
+    .user-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .user-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface-soft);
+    }
+
+    .user-name {
+      font-weight: 900;
+      color: var(--text);
+      word-break: break-word;
+    }
+
+    .user-meta {
+      margin-top: 3px;
+      color: var(--text-muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .screen-reader {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    @media (max-width: 980px) {
+      .page {
+        width: min(100% - 32px, 760px);
+        padding-bottom: 40px;
+      }
+
+      .hero,
+      .workspace-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .health-card {
+        align-self: auto;
+      }
+
+      .stats-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 640px) {
+      .page {
+        width: calc(100% - 24px);
+        padding-top: 12px;
+      }
+
+      .hero {
+        padding-top: 30px;
+      }
+
+      h1 {
+        font-size: 38px;
+      }
+
+      .hero-text {
+        font-size: 16px;
+      }
+
+      .stats-grid,
+      .gpu-metrics,
+      .progress-steps {
+        grid-template-columns: 1fr;
+      }
+
+      .toolbar,
+      .form-row {
+        grid-template-columns: 1fr;
+      }
+
+      .panel {
+        padding: 16px;
+      }
+
+      .job-top {
+        grid-template-columns: 1fr;
+      }
+
+      .job-actions {
+        justify-content: flex-start;
+      }
+
+      .btn-row > button,
+      .job-actions > button {
+        flex: 1 1 auto;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Lecture to knowledge</p>
+        <h1>업로드하면<br>요약 노트까지 바로.</h1>
+        <p class="hero-text">음성이나 영상을 전사하고, ChatMock으로 자세한 한국어 요약 노트를 생성합니다. 진행 상태와 GPU 사용량은 한 화면에서 실시간으로 확인합니다.</p>
+      </div>
+      <aside class="health-card" aria-label="시스템 상태">
+        <div class="health-row">
+          <span>분석 엔진</span>
+          <strong id="llm-model-display">ChatMock</strong>
+        </div>
+        <div class="health-row">
+          <span>전사 모델</span>
+          <strong id="whisper-model">large-v3</strong>
+        </div>
+        <div class="health-row">
+          <span>GPU 상태</span>
+          <span id="gpu-pill" class="pill">확인 중</span>
+        </div>
+        <div class="health-row">
+          <span>계정</span>
+          <strong id="user-label">확인 중</strong>
+        </div>
+        <div class="btn-row">
+          <button id="refresh-all" class="ghost-btn btn-label" type="button">
+            <i data-lucide="rotate-cw"></i>
+            새로고침
+          </button>
+          <button id="logout-btn" class="ghost-btn btn-label" type="button">
+            <i data-lucide="log-out"></i>
+            로그아웃
+          </button>
+        </div>
+      </aside>
+    </section>
+
+    <section class="stats-grid" aria-label="작업 통계">
+      <div class="stat-card">
+        <div class="stat-label">전체 작업</div>
+        <div class="stat-value" id="stat-total">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">완료</div>
+        <div class="stat-value" id="stat-completed">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">진행 중</div>
+        <div class="stat-value" id="stat-running">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">실패</div>
+        <div class="stat-value" id="stat-failed">0</div>
+      </div>
+    </section>
+
+    <section class="workspace-grid">
+      <main>
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title">새 파일 처리</h2>
+              <p class="panel-desc">오디오 또는 영상 파일을 올리면 전사와 요약을 순서대로 실행합니다.</p>
+            </div>
+          </div>
+          <form id="upload-form">
+            <label class="screen-reader" for="llm-model">요약 모델 선택</label>
+            <select id="llm-model" aria-label="요약 모델 선택" style="margin-bottom: 12px;">
+              <option value="gpt-5.4">gpt-5.4</option>
+            </select>
+            <div id="llm-status" class="selected-file" style="margin-top: 0; margin-bottom: 14px;">모델 목록을 불러오는 중입니다.</div>
+            <label id="drop-zone" class="upload-zone" for="file-input">
+              <input id="file-input" name="file" type="file" accept="audio/*,video/*" required />
+              <span class="upload-icon"><i data-lucide="upload-cloud"></i></span>
+              <span class="upload-main">파일을 선택하거나 여기에 놓기</span>
+              <span class="upload-sub">MP4, WAV, MP3, M4A 등 지원</span>
+            </label>
+            <div id="selected-file" class="selected-file">선택된 파일이 없습니다.</div>
+            <div class="btn-row" style="margin-top: 14px;">
+              <button id="upload-btn" class="btn-label" type="submit">
+                <i data-lucide="play"></i>
+                처리 시작
+              </button>
+              <button id="clear-file" class="ghost-btn btn-label" type="button">
+                <i data-lucide="x"></i>
+                선택 해제
+              </button>
+            </div>
+          </form>
+          <div id="status-banner" class="status-banner"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title">작업 목록</h2>
+              <p class="panel-desc">생성된 노트, 원문 파일, 실패 원인을 빠르게 확인합니다.</p>
+            </div>
+          </div>
+          <div class="toolbar">
+            <input id="search-input" type="search" placeholder="파일명 검색" />
+            <select id="status-filter" aria-label="상태 필터">
+              <option value="all">전체 상태</option>
+              <option value="completed">완료</option>
+              <option value="running">처리중</option>
+              <option value="failed">실패</option>
+              <option value="pending">대기</option>
+            </select>
+            <button id="clear-filters" class="ghost-btn btn-label" type="button">
+              <i data-lucide="list-filter"></i>
+              초기화
+            </button>
+          </div>
+          <div id="job-list" class="job-list"></div>
+        </section>
+      </main>
+
+      <aside>
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title">기존 업로드</h2>
+              <p class="panel-desc">이미 올라간 파일을 다시 처리합니다.</p>
+            </div>
+            <button id="refresh-files" class="icon-btn" type="button" aria-label="파일 목록 새로고침">
+              <i data-lucide="refresh-cw"></i>
+            </button>
+          </div>
+          <div class="form-row">
+            <select id="file-select" aria-label="업로드 파일 선택"></select>
+            <button id="process-existing" class="btn-label" type="button">
+              <i data-lucide="play-circle"></i>
+              선택 처리
+            </button>
+          </div>
+          <div id="files-status" class="selected-file">파일 목록을 불러오는 중입니다.</div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title">Whisper GPU</h2>
+              <p class="panel-desc">3초마다 사용량을 갱신합니다.</p>
+            </div>
+            <span id="gpu-state" class="pill">확인 중</span>
+          </div>
+          <div id="gpu-content" class="gpu-stack">
+            <div class="empty-state">
+              <div>
+                <strong>GPU 상태 확인 중</strong>
+                <span>잠시만 기다려 주세요.</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="admin-panel" class="panel" hidden>
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title">가입 승인</h2>
+              <p class="panel-desc">관리자 승인 후 계정이 활성화됩니다.</p>
+            </div>
+            <button id="refresh-users" class="icon-btn" type="button" aria-label="가입 요청 새로고침">
+              <i data-lucide="refresh-cw"></i>
+            </button>
+          </div>
+          <div id="user-requests" class="user-list"></div>
+        </section>
+      </aside>
+    </section>
+  </div>
+
+  <script>
+    const state = {
+      jobs: [],
+      expandedNotes: new Set(),
+      noteCache: new Map(),
+      activeJob: null,
+      llmModel: localStorage.getItem("notecraft.llmModel") || "gpt-5.4",
+      user: null,
+      jobsTimer: null,
+      gpuTimer: null,
+    };
+
+    const els = {
+      uploadForm: document.getElementById("upload-form"),
+      fileInput: document.getElementById("file-input"),
+      dropZone: document.getElementById("drop-zone"),
+      selectedFile: document.getElementById("selected-file"),
+      clearFile: document.getElementById("clear-file"),
+      uploadBtn: document.getElementById("upload-btn"),
+      statusBanner: document.getElementById("status-banner"),
+      refreshAll: document.getElementById("refresh-all"),
+      logoutBtn: document.getElementById("logout-btn"),
+      jobList: document.getElementById("job-list"),
+      searchInput: document.getElementById("search-input"),
+      statusFilter: document.getElementById("status-filter"),
+      clearFilters: document.getElementById("clear-filters"),
+      fileSelect: document.getElementById("file-select"),
+      processExisting: document.getElementById("process-existing"),
+      refreshFiles: document.getElementById("refresh-files"),
+      filesStatus: document.getElementById("files-status"),
+      gpuState: document.getElementById("gpu-state"),
+      gpuPill: document.getElementById("gpu-pill"),
+      gpuContent: document.getElementById("gpu-content"),
+      whisperModel: document.getElementById("whisper-model"),
+      userLabel: document.getElementById("user-label"),
+      adminPanel: document.getElementById("admin-panel"),
+      userRequests: document.getElementById("user-requests"),
+      refreshUsers: document.getElementById("refresh-users"),
+      llmModel: document.getElementById("llm-model"),
+      llmStatus: document.getElementById("llm-status"),
+      llmModelDisplay: document.getElementById("llm-model-display"),
+      statTotal: document.getElementById("stat-total"),
+      statCompleted: document.getElementById("stat-completed"),
+      statRunning: document.getElementById("stat-running"),
+      statFailed: document.getElementById("stat-failed"),
+    };
+
+    function mountIcons() {
+      if (window.lucide) {
+        window.lucide.createIcons();
+      }
+    }
+
+    function escapeHtml(value) {
+      const div = document.createElement("div");
+      div.textContent = value == null ? "" : String(value);
+      return div.innerHTML;
+    }
+
+    function escapeAttr(value) {
+      return escapeHtml(value).replace(/"/g, "&quot;");
+    }
+
+    function formatBytes(bytes) {
+      const value = Number(bytes);
+      if (!Number.isFinite(value) || value <= 0) return "0 MB";
+      if (value >= 1024 * 1024 * 1024) return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+      return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+    }
+
+    function formatGb(mb) {
+      const value = Number(mb);
+      if (!Number.isFinite(value)) return "-";
+      return `${(value / 1024).toFixed(1)} GB`;
+    }
+
+    function formatDate(timestamp) {
+      const value = Number(timestamp);
+      if (!Number.isFinite(value)) return "-";
+      return new Date(value * 1000).toLocaleString("ko-KR", {
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    }
+
+    function clamp(value) {
+      const number = Number(value);
+      if (!Number.isFinite(number)) return 0;
+      return Math.max(0, Math.min(100, number));
+    }
+
+    function setStatus(message, type = "info") {
+      if (!message) {
+        els.statusBanner.className = "status-banner";
+        els.statusBanner.textContent = "";
+        return;
+      }
+      els.statusBanner.className = `status-banner show ${type === "bad" ? "bad" : ""}`;
+      els.statusBanner.textContent = message;
+    }
+
+    async function apiFetch(url, options = {}) {
+      const res = await fetch(url, options);
+      if (res.status === 401) {
+        window.location.href = "/login";
+        throw new Error("로그인이 필요합니다.");
+      }
+      return res;
+    }
+
+    function statusInfo(status) {
+      const map = {
+        completed: { label: "완료", cls: "ok" },
+        running: { label: "처리중", cls: "warn" },
+        pending: { label: "대기", cls: "" },
+        failed: { label: "실패", cls: "bad" },
+      };
+      return map[status] || map.pending;
+    }
+
+    function stageLabel(stage) {
+      const value = String(stage || "pending").toLowerCase();
+      const labels = {
+        pending: "대기",
+        transcribing: "음성 인식 중",
+        summarizing: "요약 생성 중",
+        writing_note: "노트 저장 중",
+        done: "완료",
+        error: "오류",
+      };
+      return labels[value] || value;
+    }
+
+    function stepClass(job, step) {
+      const stage = String(job.stage || "").toLowerCase();
+      if (job.status === "completed") return "done";
+      if (stage === step) return "active";
+      if (step === "transcribing" && ["summarizing", "writing_note", "done"].includes(stage)) return "done";
+      if (step === "summarizing" && ["writing_note", "done"].includes(stage)) return "done";
+      if (step === "writing_note" && stage === "done") return "done";
+      return "";
+    }
+
+    function updateFileLabel() {
+      const file = els.fileInput.files[0];
+      els.selectedFile.textContent = file ? `${file.name} · ${formatBytes(file.size)}` : "선택된 파일이 없습니다.";
+    }
+
+    function updateStats(list) {
+      const total = list.length;
+      const completed = list.filter((job) => job.status === "completed").length;
+      const running = list.filter((job) => job.status === "running" || job.status === "pending").length;
+      const failed = list.filter((job) => job.status === "failed").length;
+      els.statTotal.textContent = total;
+      els.statCompleted.textContent = completed;
+      els.statRunning.textContent = running;
+      els.statFailed.textContent = failed;
+    }
+
+    function filteredJobs() {
+      const query = els.searchInput.value.trim().toLowerCase();
+      const status = els.statusFilter.value;
+      return state.jobs
+        .filter((job) => !query || String(job.filename || "").toLowerCase().includes(query))
+        .filter((job) => status === "all" || job.status === status)
+        .sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+    }
+
+    function renderJobs() {
+      const list = filteredJobs();
+      updateStats(state.jobs);
+      if (!list.length) {
+        els.jobList.innerHTML = `
+          <div class="empty-state">
+            <div>
+              <strong>표시할 작업이 없습니다</strong>
+              <span>파일을 업로드하거나 필터를 조정해 주세요.</span>
+            </div>
+          </div>
+        `;
+        mountIcons();
+        return;
+      }
+
+      els.jobList.innerHTML = list.map((job) => {
+        const status = statusInfo(job.status || "pending");
+        const noteOpen = state.expandedNotes.has(job.id);
+        const noteHtml = state.noteCache.get(job.id) || `<div class="empty-state"><div><strong>노트 불러오는 중</strong><span>잠시만 기다려 주세요.</span></div></div>`;
+        const output = job.output || {};
+        const canRetry = job.status === "failed" && job.stored_path;
+        const actions = [
+          job.status === "completed" && job.note_path ? `<button class="chip" data-action="toggle-note" data-job-id="${escapeAttr(job.id)}"><i data-lucide="file-text"></i>${noteOpen ? "닫기" : "노트"}</button>` : "",
+          job.status === "completed" && job.note_path ? `<button class="chip" data-action="copy-note" data-job-id="${escapeAttr(job.id)}"><i data-lucide="copy"></i>복사</button>` : "",
+          job.status === "completed" && job.note_path ? `<button class="chip" data-action="download-note" data-job-id="${escapeAttr(job.id)}" data-name="${escapeAttr(job.filename || "note")}"><i data-lucide="download"></i>MD</button>` : "",
+          canRetry ? `<button class="chip" data-action="retry-job" data-path="${escapeAttr(job.stored_path)}"><i data-lucide="rotate-ccw"></i>재처리</button>` : "",
+          `<button class="chip" data-action="delete-job" data-job-id="${escapeAttr(job.id)}"><i data-lucide="trash-2"></i>삭제</button>`,
+        ].join("");
+
+        const outputButtons = [
+          output.json ? `<button class="chip" data-action="download-output" data-path="${escapeAttr(output.json)}" data-name="${escapeAttr((job.filename || "output") + ".json")}">JSON</button>` : "",
+          output.txt ? `<button class="chip" data-action="download-output" data-path="${escapeAttr(output.txt)}" data-name="${escapeAttr((job.filename || "output") + ".txt")}">TXT</button>` : "",
+          output.srt ? `<button class="chip" data-action="download-output" data-path="${escapeAttr(output.srt)}" data-name="${escapeAttr((job.filename || "output") + ".srt")}">SRT</button>` : "",
+        ].join("");
+
+        return `
+          <article class="job-card">
+            <div class="job-top">
+              <div>
+                <h3 class="job-title">${escapeHtml(job.filename || "(no name)")}</h3>
+                <div class="job-meta">
+                  <span>${stageLabel(job.stage)}</span>
+                  <span>${escapeHtml(job.llm_model || "gpt-5.4")}</span>
+                  <span>ID ${escapeHtml(String(job.id || "").slice(0, 8))}</span>
+                  <span>${formatDate(job.created_at)}</span>
+                </div>
+              </div>
+              <div class="job-actions">
+                <span class="pill ${status.cls}">${status.label}</span>
+                ${actions}
+              </div>
+            </div>
+            ${job.status === "running" || job.status === "pending" ? `
+              <div class="progress-steps">
+                <div class="step ${stepClass(job, "transcribing")}"><span class="step-dot"></span>음성 인식</div>
+                <div class="step ${stepClass(job, "summarizing")}"><span class="step-dot"></span>요약 생성</div>
+                <div class="step ${stepClass(job, "writing_note")}"><span class="step-dot"></span>노트 저장</div>
+              </div>
+            ` : ""}
+            ${job.status === "failed" && job.error ? `<div class="job-error">${escapeHtml(job.error)}</div>` : ""}
+            ${outputButtons ? `<div class="files-row">${outputButtons}</div>` : ""}
+            <div class="note-panel" id="note-${escapeAttr(job.id)}" ${noteOpen ? "" : "hidden"}>
+              <div class="note-content">${noteHtml}</div>
+            </div>
+          </article>
+        `;
+      }).join("");
+      mountIcons();
+    }
+
+    async function fetchJobs() {
+      try {
+        const res = await apiFetch("/jobs", { cache: "no-store" });
+        if (!res.ok) throw new Error("작업 목록을 불러오지 못했습니다.");
+        state.jobs = await res.json();
+        renderJobs();
+      } catch (err) {
+        els.jobList.innerHTML = `<div class="empty-state"><div><strong>목록 불러오기 실패</strong><span>${escapeHtml(err.message)}</span></div></div>`;
+      }
+    }
+
+    async function fetchFiles() {
+      els.filesStatus.textContent = "파일 목록을 불러오는 중입니다.";
+      els.fileSelect.innerHTML = "";
+      try {
+        const res = await apiFetch("/files", { cache: "no-store" });
+        if (!res.ok) throw new Error("파일 목록을 불러오지 못했습니다.");
+        const files = await res.json();
+        if (!Array.isArray(files) || !files.length) {
+          els.fileSelect.innerHTML = `<option value="">업로드된 파일 없음</option>`;
+          els.filesStatus.textContent = "먼저 새 파일을 업로드해 주세요.";
+          return;
+        }
+        files.sort((a, b) => (b.mtime || 0) - (a.mtime || 0));
+        els.fileSelect.innerHTML = files.map((file) => (
+          `<option value="${escapeAttr(file.path)}">${escapeHtml(file.name)} · ${formatBytes(file.size)}</option>`
+        )).join("");
+        els.filesStatus.textContent = `${files.length}개 파일을 찾았습니다.`;
+      } catch (err) {
+        els.fileSelect.innerHTML = `<option value="">불러오기 실패</option>`;
+        els.filesStatus.textContent = err.message;
+      }
+    }
+
+    async function fetchLlmModels() {
+      try {
+        const res = await apiFetch("/llm/models", { cache: "no-store" });
+        if (!res.ok) throw new Error("모델 목록을 불러오지 못했습니다.");
+        const data = await res.json();
+        const models = Array.isArray(data.models) && data.models.length ? data.models : [state.llmModel];
+        const selected = models.includes(state.llmModel) ? state.llmModel : (data.default_model || models[0]);
+        state.llmModel = selected;
+        localStorage.setItem("notecraft.llmModel", selected);
+        els.llmModel.innerHTML = models.map((model) => (
+          `<option value="${escapeAttr(model)}" ${model === selected ? "selected" : ""}>${escapeHtml(model)}</option>`
+        )).join("");
+        els.llmModelDisplay.textContent = selected;
+        els.llmStatus.textContent = data.available
+          ? `${models.length}개 모델을 ChatMock에서 불러왔습니다.`
+          : `ChatMock 연결 전입니다. 기본 목록을 사용합니다.`;
+      } catch (err) {
+        const fallback = ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.2", "gpt-5.1", "gpt-5", "gpt-5.3-codex", "gpt-5.2-codex", "gpt-5-codex", "codex-mini"];
+        const selected = fallback.includes(state.llmModel) ? state.llmModel : "gpt-5.4";
+        state.llmModel = selected;
+        els.llmModel.innerHTML = fallback.map((model) => (
+          `<option value="${escapeAttr(model)}" ${model === selected ? "selected" : ""}>${escapeHtml(model)}</option>`
+        )).join("");
+        els.llmModelDisplay.textContent = selected;
+        els.llmStatus.textContent = err.message;
+      }
+    }
+
+    async function fetchGpuStatus() {
+      try {
+        const res = await apiFetch("/system/gpu", { cache: "no-store" });
+        if (!res.ok) throw new Error(`GPU API ${res.status}`);
+        const data = await res.json();
+        renderGpu(data);
+      } catch (err) {
+        renderGpu({ available: false, error: err.message });
+      }
+    }
+
+    async function fetchMe() {
+      const res = await apiFetch("/auth/me", { cache: "no-store" });
+      const data = await res.json();
+      if (!data.user) {
+        window.location.href = "/login";
+        return;
+      }
+      state.user = data.user;
+      els.userLabel.textContent = `${data.user.display_name || data.user.username} · ${data.user.role === "admin" ? "관리자" : "사용자"}`;
+      if (data.user.role === "admin") {
+        els.adminPanel.hidden = false;
+        await fetchAdminUsers();
+      } else {
+        els.adminPanel.hidden = true;
+      }
+    }
+
+    function renderAdminUsers(users) {
+      const pending = users.filter((user) => user.status === "pending");
+      if (!pending.length) {
+        els.userRequests.innerHTML = `
+          <div class="empty-state">
+            <div>
+              <strong>대기 중인 가입 요청이 없습니다</strong>
+              <span>새 가입 요청이 생기면 여기에 표시됩니다.</span>
+            </div>
+          </div>
+        `;
+        mountIcons();
+        return;
+      }
+      els.userRequests.innerHTML = pending.map((user) => `
+        <div class="user-row">
+          <div>
+            <div class="user-name">${escapeHtml(user.display_name || user.username)}</div>
+            <div class="user-meta">${escapeHtml(user.username)} · ${formatDate(user.created_at)}</div>
+          </div>
+          <div class="btn-row">
+            <button class="chip" data-action="approve-user" data-user-id="${escapeAttr(user.id)}"><i data-lucide="check"></i>승인</button>
+            <button class="chip" data-action="reject-user" data-user-id="${escapeAttr(user.id)}"><i data-lucide="x"></i>거절</button>
+          </div>
+        </div>
+      `).join("");
+      mountIcons();
+    }
+
+    async function fetchAdminUsers() {
+      if (!state.user || state.user.role !== "admin") return;
+      try {
+        const res = await apiFetch("/admin/users", { cache: "no-store" });
+        if (!res.ok) throw new Error("가입 요청 목록을 불러오지 못했습니다.");
+        renderAdminUsers(await res.json());
+      } catch (err) {
+        els.userRequests.innerHTML = `<div class="job-error">${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    async function updateUserApproval(userId, action) {
+      const res = await apiFetch(`/admin/users/${userId}/${action}`, { method: "POST" });
+      if (!res.ok) throw new Error(action === "approve" ? "승인 실패" : "거절 실패");
+      await fetchAdminUsers();
+    }
+
+    async function logout() {
+      await fetch("/auth/logout", { method: "POST" });
+      window.location.href = "/login";
+    }
+
+    function renderGpu(data) {
+      const whisper = data?.whisper || {};
+      els.whisperModel.textContent = `${whisper.model || "large-v3"} · ${whisper.compute || "float16"}`;
+
+      if (!data || !data.available || !Array.isArray(data.gpus) || !data.gpus.length) {
+        els.gpuState.className = "pill bad";
+        els.gpuState.textContent = "비활성";
+        els.gpuPill.className = "pill bad";
+        els.gpuPill.textContent = "비활성";
+        els.gpuContent.innerHTML = `
+          <div class="empty-state">
+            <div>
+              <strong>GPU 정보를 확인할 수 없습니다</strong>
+              <span>${escapeHtml(data?.error || "nvidia-smi 응답이 없습니다.")}</span>
+            </div>
+          </div>
+          <div class="gpu-meta">GPU ${escapeHtml(whisper.gpu_ids || "auto")}</div>
+        `;
+        return;
+      }
+
+      els.gpuState.className = "pill ok";
+      els.gpuState.textContent = "실시간";
+      els.gpuPill.className = "pill ok";
+      els.gpuPill.textContent = "정상";
+
+      const checkedAt = data.checked_at ? new Date(data.checked_at * 1000).toLocaleTimeString("ko-KR") : "-";
+      els.gpuContent.innerHTML = data.gpus.map((gpu) => {
+        const used = Number(gpu.memory_used_mb) || 0;
+        const total = Number(gpu.memory_total_mb) || 0;
+        const util = clamp(gpu.utilization_gpu);
+        const mem = total > 0 ? clamp((used / total) * 100) : 0;
+        const temp = gpu.temperature_c == null ? "-" : `${Number(gpu.temperature_c).toFixed(0)}°C`;
+        const power = gpu.power_w == null ? "-" : `${Number(gpu.power_w).toFixed(0)}W`;
+        return `
+          <div class="gpu-card">
+            <div class="gpu-card-head">
+              <div>
+                <div class="gpu-name">${escapeHtml(gpu.name)}</div>
+                <div class="gpu-index">GPU ${escapeHtml(gpu.index)}</div>
+              </div>
+              <div class="gpu-util">${util.toFixed(0)}%</div>
+            </div>
+            <div class="meter" aria-label="GPU 사용률"><div class="meter-fill" style="width: ${util}%"></div></div>
+            <div class="gpu-metrics">
+              <div>
+                <div class="metric-label">VRAM</div>
+                <div class="metric-value">${formatGb(used)} / ${formatGb(total)}</div>
+                <div class="meter" style="margin-top: 7px;"><div class="meter-fill" style="width: ${mem}%"></div></div>
+              </div>
+              <div>
+                <div class="metric-label">여유 VRAM</div>
+                <div class="metric-value">${formatGb(gpu.memory_free_mb)}</div>
+              </div>
+              <div>
+                <div class="metric-label">온도</div>
+                <div class="metric-value">${temp}</div>
+              </div>
+              <div>
+                <div class="metric-label">전력</div>
+                <div class="metric-value">${power}</div>
+              </div>
+            </div>
+            <div class="gpu-meta">${escapeHtml(whisper.model || "large-v3")} · ${escapeHtml(whisper.compute || "float16")} · GPU ${escapeHtml(whisper.gpu_ids || "auto")} · ${checkedAt}</div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    async function pollJob(jobId) {
+      state.activeJob = jobId;
+      const started = Date.now();
+      const timer = setInterval(async () => {
+        try {
+          const res = await apiFetch(`/jobs/${jobId}`, { cache: "no-store" });
+          if (!res.ok) throw new Error("작업 상태를 찾지 못했습니다.");
+          const job = await res.json();
+          setStatus(`${job.filename || "작업"} · ${stageLabel(job.stage)}`);
+          if (job.status === "completed") {
+            setStatus("노트 생성이 완료됐습니다.");
+            clearInterval(timer);
+            await fetchJobs();
+          } else if (job.status === "failed") {
+            setStatus(job.error || "작업이 실패했습니다.", "bad");
+            clearInterval(timer);
+            await fetchJobs();
+          } else if (Date.now() - started > 1000 * 60 * 60 * 4) {
+            clearInterval(timer);
+          }
+        } catch (err) {
+          setStatus(err.message, "bad");
+          clearInterval(timer);
+        }
+      }, 1600);
+    }
+
+    async function uploadSelectedFile(event) {
+      event.preventDefault();
+      const file = els.fileInput.files[0];
+      if (!file) {
+        setStatus("처리할 파일을 먼저 선택해 주세요.", "bad");
+        return;
+      }
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("llm_model", state.llmModel);
+      els.uploadBtn.disabled = true;
+      setStatus("업로드 중입니다.");
+      try {
+        const res = await apiFetch("/upload", { method: "POST", body: formData });
+        if (!res.ok) throw new Error("업로드에 실패했습니다.");
+        const data = await res.json();
+        setStatus("처리를 시작했습니다.");
+        await Promise.all([fetchJobs(), fetchFiles()]);
+        pollJob(data.job_id);
+      } catch (err) {
+        setStatus(err.message, "bad");
+      } finally {
+        els.uploadBtn.disabled = false;
+      }
+    }
+
+    async function processExisting(path) {
+      if (!path) {
+        setStatus("선택된 파일이 없습니다.", "bad");
+        return;
+      }
+      els.processExisting.disabled = true;
+      setStatus("기존 파일 처리를 시작합니다.");
+      try {
+        const res = await apiFetch("/process_existing", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path, llm_model: state.llmModel }),
+        });
+        if (!res.ok) throw new Error("기존 파일 처리 시작에 실패했습니다.");
+        const data = await res.json();
+        await fetchJobs();
+        pollJob(data.job_id);
+      } catch (err) {
+        setStatus(err.message, "bad");
+      } finally {
+        els.processExisting.disabled = false;
+      }
+    }
+
+    async function loadNote(jobId) {
+      if (state.noteCache.has(jobId)) return;
+      state.noteCache.set(jobId, `<div class="empty-state"><div><strong>노트 불러오는 중</strong><span>잠시만 기다려 주세요.</span></div></div>`);
+      renderJobs();
+      try {
+        const res = await apiFetch(`/note/${jobId}`, { cache: "no-store" });
+        if (!res.ok) throw new Error("노트를 불러오지 못했습니다.");
+        const data = await res.json();
+        const html = window.marked ? window.marked.parse(data.content || "") : `<pre>${escapeHtml(data.content || "")}</pre>`;
+        state.noteCache.set(jobId, html);
+      } catch (err) {
+        state.noteCache.set(jobId, `<div class="job-error">${escapeHtml(err.message)}</div>`);
+      }
+      renderJobs();
+    }
+
+    async function downloadNote(jobId, filename) {
+      const res = await apiFetch(`/note/${jobId}`);
+      if (!res.ok) throw new Error("노트 다운로드에 실패했습니다.");
+      const data = await res.json();
+      downloadBlob(data.content || "", `${filename || "note"}.md`, "text/markdown");
+    }
+
+    async function copyNote(jobId) {
+      const res = await apiFetch(`/note/${jobId}`);
+      if (!res.ok) throw new Error("노트 복사에 실패했습니다.");
+      const data = await res.json();
+      await navigator.clipboard.writeText(data.content || "");
+      setStatus("노트를 클립보드에 복사했습니다.");
+    }
+
+    async function downloadOutput(path, filename) {
+      const res = await apiFetch(`/download?path=${encodeURIComponent(path)}`);
+      if (!res.ok) throw new Error("파일 다운로드에 실패했습니다.");
+      const blob = await res.blob();
+      downloadBlob(blob, filename || "download", "application/octet-stream");
+    }
+
+    function downloadBlob(content, filename, type) {
+      const blob = content instanceof Blob ? content : new Blob([content], { type });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    async function deleteJob(jobId) {
+      if (!confirm("이 작업을 삭제할까요?")) return;
+      const res = await apiFetch(`/jobs/${jobId}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("작업 삭제에 실패했습니다.");
+      state.noteCache.delete(jobId);
+      state.expandedNotes.delete(jobId);
+      await fetchJobs();
+    }
+
+    function bindEvents() {
+      els.uploadForm.addEventListener("submit", uploadSelectedFile);
+      els.fileInput.addEventListener("change", updateFileLabel);
+      els.clearFile.addEventListener("click", () => {
+        els.fileInput.value = "";
+        updateFileLabel();
+        setStatus("");
+      });
+
+      ["dragenter", "dragover"].forEach((eventName) => {
+        els.dropZone.addEventListener(eventName, (event) => {
+          event.preventDefault();
+          els.dropZone.classList.add("dragging");
+        });
+      });
+      ["dragleave", "drop"].forEach((eventName) => {
+        els.dropZone.addEventListener(eventName, (event) => {
+          event.preventDefault();
+          els.dropZone.classList.remove("dragging");
+        });
+      });
+      els.dropZone.addEventListener("drop", (event) => {
+        if (event.dataTransfer.files.length) {
+          els.fileInput.files = event.dataTransfer.files;
+          updateFileLabel();
+        }
+      });
+
+      els.refreshAll.addEventListener("click", () => Promise.all([fetchLlmModels(), fetchJobs(), fetchFiles(), fetchGpuStatus(), fetchAdminUsers()]));
+      els.logoutBtn.addEventListener("click", logout);
+      els.refreshFiles.addEventListener("click", fetchFiles);
+      els.refreshUsers.addEventListener("click", fetchAdminUsers);
+      els.processExisting.addEventListener("click", () => processExisting(els.fileSelect.value));
+      els.llmModel.addEventListener("change", () => {
+        state.llmModel = els.llmModel.value;
+        localStorage.setItem("notecraft.llmModel", state.llmModel);
+        els.llmModelDisplay.textContent = state.llmModel;
+      });
+      els.searchInput.addEventListener("input", renderJobs);
+      els.statusFilter.addEventListener("change", renderJobs);
+      els.clearFilters.addEventListener("click", () => {
+        els.searchInput.value = "";
+        els.statusFilter.value = "all";
+        renderJobs();
+      });
+
+      els.jobList.addEventListener("click", async (event) => {
+        const button = event.target.closest("button[data-action]");
+        if (!button) return;
+        const action = button.dataset.action;
+        const jobId = button.dataset.jobId;
+        try {
+          if (action === "toggle-note") {
+            if (state.expandedNotes.has(jobId)) {
+              state.expandedNotes.delete(jobId);
+            } else {
+              state.expandedNotes.add(jobId);
+              await loadNote(jobId);
+            }
+            renderJobs();
+          }
+          if (action === "copy-note") await copyNote(jobId);
+          if (action === "download-note") await downloadNote(jobId, button.dataset.name);
+          if (action === "download-output") await downloadOutput(button.dataset.path, button.dataset.name);
+          if (action === "retry-job") await processExisting(button.dataset.path);
+          if (action === "delete-job") await deleteJob(jobId);
+        } catch (err) {
+          setStatus(err.message, "bad");
+        }
+      });
+      els.userRequests.addEventListener("click", async (event) => {
+        const button = event.target.closest("button[data-action]");
+        if (!button) return;
+        try {
+          if (button.dataset.action === "approve-user") await updateUserApproval(button.dataset.userId, "approve");
+          if (button.dataset.action === "reject-user") await updateUserApproval(button.dataset.userId, "reject");
+        } catch (err) {
+          setStatus(err.message, "bad");
+        }
+      });
+    }
+
+    function startTimers() {
+      if (state.jobsTimer) clearInterval(state.jobsTimer);
+      if (state.gpuTimer) clearInterval(state.gpuTimer);
+      state.jobsTimer = setInterval(fetchJobs, 3000);
+      state.gpuTimer = setInterval(fetchGpuStatus, 3000);
+    }
+
+    async function init() {
+      mountIcons();
+      updateFileLabel();
+      bindEvents();
+      await fetchMe();
+      await Promise.all([fetchLlmModels(), fetchJobs(), fetchFiles(), fetchGpuStatus()]);
+      startTimers();
+    }
+
+    init();
+  </script>
+</body>
+</html>

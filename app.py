@@ -1,9 +1,13 @@
 import json
+import hashlib
+import hmac
 import os
 import re
+import secrets
 import shutil
 import sqlite3
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -11,7 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import requests
-from fastapi import Body, FastAPI, File, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 
@@ -22,11 +26,39 @@ OUTPUT_ROOT = Path(os.environ.get("OUTPUT_ROOT", BASE_DIR / "output")).resolve()
 VAULT_DIR = Path(os.environ.get("VAULT_PATH", BASE_DIR / "vault")).resolve()
 SYSTEM_RULES_PATH = Path(os.environ.get("SYSTEM_RULES_PATH", VAULT_DIR / "SystemRules.md")).resolve()
 PROMPT_PATH = Path(os.environ.get("PROMPT_PATH", BASE_DIR / "prompt_system.txt")).resolve()
-OLLAMA_ENDPOINT = os.environ.get("OLLAMA_ENDPOINT", "http://127.0.0.1:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gpt-oss:20b")
+LLM_BASE_URL = os.environ.get("LLM_BASE_URL", os.environ.get("CHATMOCK_BASE_URL", "http://127.0.0.1:8000/v1")).rstrip("/")
+LLM_API_KEY = os.environ.get("LLM_API_KEY", os.environ.get("CHATMOCK_API_KEY", "anything"))
+LLM_MODEL = os.environ.get("LLM_MODEL", os.environ.get("CHATMOCK_MODEL", "gpt-5.4"))
+LLM_TIMEOUT = float(os.environ.get("LLM_TIMEOUT", "480"))
+DEFAULT_LLM_MODELS = [
+    "gpt-5.5",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.2",
+    "gpt-5.1",
+    "gpt-5",
+    "gpt-5.3-codex",
+    "gpt-5.3-codex-spark",
+    "gpt-5.2-codex",
+    "gpt-5-codex",
+    "gpt-5.1-codex",
+    "gpt-5.1-codex-max",
+    "gpt-5.1-codex-mini",
+    "codex-mini",
+]
 DB_PATH = Path(os.environ.get("JOBS_DB_PATH", BASE_DIR / "jobs.db")).resolve()
+WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "large-v3")
+WHISPER_COMPUTE = os.environ.get("WHISPER_COMPUTE", "float16")
+WHISPER_GPU_IDS = os.environ.get("WHISPER_GPU_IDS", "auto")
+STATIC_DIR = Path(os.environ.get("STATIC_DIR", BASE_DIR / "static")).resolve()
+DASHBOARD_PATH = STATIC_DIR / "dashboard.html"
+LOGIN_PATH = STATIC_DIR / "login.html"
+SESSION_COOKIE_NAME = "notecraft_session"
+SESSION_TTL_SECONDS = int(os.environ.get("SESSION_TTL_SECONDS", str(60 * 60 * 24 * 7)))
+APP_ADMIN_USERNAME = os.environ.get("APP_ADMIN_USERNAME", "yes2310")
+APP_ADMIN_PASSWORD = os.environ.get("APP_ADMIN_PASSWORD", "admin1234!")
 
-for d in (UPLOAD_DIR, OUTPUT_ROOT, VAULT_DIR):
+for d in (UPLOAD_DIR, OUTPUT_ROOT, VAULT_DIR, STATIC_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
 
@@ -34,6 +66,7 @@ app = FastAPI(title="STT to Note Automation", version="0.1.0")
 
 jobs: Dict[str, Dict[str, Any]] = {}
 jobs_lock = threading.Lock()
+auth_lock = threading.Lock()
 SUPPORTED_EXTS = {".mp4", ".mkv", ".mov", ".avi", ".mp3", ".wav", ".m4a"}
 db_conn: Optional[sqlite3.Connection] = None
 
@@ -41,6 +74,7 @@ db_conn: Optional[sqlite3.Connection] = None
 def init_db():
     global db_conn
     db_conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    db_conn.row_factory = sqlite3.Row
     db_conn.execute(
         """
         CREATE TABLE IF NOT EXISTS jobs (
@@ -59,6 +93,37 @@ def init_db():
         )
         """
     )
+    cols = {row[1] for row in db_conn.execute("PRAGMA table_info(jobs)").fetchall()}
+    if "llm_model" not in cols:
+        db_conn.execute("ALTER TABLE jobs ADD COLUMN llm_model TEXT")
+        db_conn.execute("UPDATE jobs SET llm_model = ? WHERE llm_model IS NULL OR TRIM(llm_model) = ''", (LLM_MODEL,))
+    db_conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id TEXT PRIMARY KEY,
+            username TEXT UNIQUE NOT NULL,
+            display_name TEXT,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'user',
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at REAL NOT NULL,
+            approved_at REAL
+        )
+        """
+    )
+    db_conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sessions (
+            token_hash TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            expires_at REAL NOT NULL,
+            last_seen REAL NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        )
+        """
+    )
+    ensure_admin_user()
     db_conn.commit()
 
 
@@ -76,6 +141,7 @@ def load_jobs_from_db():
                 "status": rec["status"],
                 "stage": rec["stage"],
                 "note_path": rec["note_path"],
+                "llm_model": rec.get("llm_model") or LLM_MODEL,
                 "output": {
                     "json": rec["output_json"],
                     "txt": rec["output_txt"],
@@ -91,8 +157,8 @@ def save_job_to_db(job: Dict[str, Any]):
     db_conn.execute(
         """
         INSERT OR REPLACE INTO jobs
-        (id, filename, stored_path, status, stage, note_path, output_json, output_txt, output_srt, error, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, filename, stored_path, status, stage, note_path, llm_model, output_json, output_txt, output_srt, error, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             job.get("id"),
@@ -101,6 +167,7 @@ def save_job_to_db(job: Dict[str, Any]):
             job.get("status"),
             job.get("stage"),
             job.get("note_path"),
+            job.get("llm_model") or LLM_MODEL,
             job.get("output", {}).get("json") if job.get("output") else None,
             job.get("output", {}).get("txt") if job.get("output") else None,
             job.get("output", {}).get("srt") if job.get("output") else None,
@@ -110,6 +177,148 @@ def save_job_to_db(job: Dict[str, Any]):
         ),
     )
     db_conn.commit()
+
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 200_000)
+    return f"pbkdf2_sha256${salt}${digest.hex()}"
+
+
+def verify_password(password: str, stored_hash: str) -> bool:
+    try:
+        algorithm, salt, expected = stored_hash.split("$", 2)
+    except ValueError:
+        return False
+    if algorithm != "pbkdf2_sha256":
+        return False
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 200_000)
+    return hmac.compare_digest(digest.hex(), expected)
+
+
+def hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def public_user(user: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": user.get("id"),
+        "username": user.get("username"),
+        "display_name": user.get("display_name") or user.get("username"),
+        "role": user.get("role"),
+        "status": user.get("status"),
+        "created_at": user.get("created_at"),
+        "approved_at": user.get("approved_at"),
+    }
+
+
+def ensure_admin_user():
+    if not APP_ADMIN_USERNAME or not APP_ADMIN_PASSWORD:
+        return
+    existing = db_conn.execute("SELECT id FROM users WHERE username = ?", (APP_ADMIN_USERNAME,)).fetchone()
+    if existing:
+        password_update = ", password_hash = ?" if "APP_ADMIN_PASSWORD" in os.environ else ""
+        params = [time.time()]
+        if "APP_ADMIN_PASSWORD" in os.environ:
+            params.append(hash_password(APP_ADMIN_PASSWORD))
+        params.append(APP_ADMIN_USERNAME)
+        db_conn.execute(
+            f"UPDATE users SET role = 'admin', status = 'active', approved_at = COALESCE(approved_at, ?){password_update} WHERE username = ?",
+            tuple(params),
+        )
+        return
+    db_conn.execute(
+        """
+        INSERT INTO users (id, username, display_name, password_hash, role, status, created_at, approved_at)
+        VALUES (?, ?, ?, ?, 'admin', 'active', ?, ?)
+        """,
+        (
+            uuid.uuid4().hex,
+            APP_ADMIN_USERNAME,
+            APP_ADMIN_USERNAME,
+            hash_password(APP_ADMIN_PASSWORD),
+            time.time(),
+            time.time(),
+        ),
+    )
+
+
+def get_user_by_session_token(token: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not token or db_conn is None:
+        return None
+    now = time.time()
+    row = db_conn.execute(
+        """
+        SELECT users.*
+        FROM sessions
+        JOIN users ON users.id = sessions.user_id
+        WHERE sessions.token_hash = ?
+          AND sessions.expires_at > ?
+          AND users.status = 'active'
+        """,
+        (hash_token(token), now),
+    ).fetchone()
+    if not row:
+        return None
+    db_conn.execute("UPDATE sessions SET last_seen = ? WHERE token_hash = ?", (now, hash_token(token)))
+    db_conn.commit()
+    return dict(row)
+
+
+def current_user(request: Request) -> Optional[Dict[str, Any]]:
+    return get_user_by_session_token(request.cookies.get(SESSION_COOKIE_NAME))
+
+
+def require_authenticated(request: Request) -> Dict[str, Any]:
+    user = current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="login required")
+    return user
+
+
+def require_admin(request: Request) -> Dict[str, Any]:
+    user = require_authenticated(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="admin required")
+    return user
+
+
+def create_session(user_id: str) -> str:
+    token = secrets.token_urlsafe(32)
+    now = time.time()
+    db_conn.execute(
+        "INSERT INTO sessions (token_hash, user_id, created_at, expires_at, last_seen) VALUES (?, ?, ?, ?, ?)",
+        (hash_token(token), user_id, now, now + SESSION_TTL_SECONDS, now),
+    )
+    db_conn.commit()
+    return token
+
+
+def clear_session(token: Optional[str]) -> None:
+    if token:
+        db_conn.execute("DELETE FROM sessions WHERE token_hash = ?", (hash_token(token),))
+        db_conn.commit()
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    path = request.url.path
+    public_paths = {
+        "/login",
+        "/auth/login",
+        "/auth/register",
+        "/auth/logout",
+        "/auth/me",
+        "/health",
+        "/favicon.ico",
+    }
+    if path in public_paths:
+        return await call_next(request)
+    if current_user(request):
+        return await call_next(request)
+    if path in {"/", "/ui"}:
+        return RedirectResponse(url="/login")
+    return JSONResponse(status_code=401, content={"detail": "login required"})
 
 
 def read_system_rules() -> Optional[str]:
@@ -125,15 +334,12 @@ def read_system_rules() -> Optional[str]:
 def read_system_prompt() -> str:
     """Load custom system prompt from PROMPT_PATH if present, else default."""
     default_prompt = (
-        "너는 한국어로 자막 전체를 아주 자세히 정리하는 요약자다. "
-        "반드시 한국어로만 답하고, 영어를 사용하지 마라. "
-        "JSON 객체 하나만 반환하고, JSON 밖에 어떤 문구도 넣지 마라. "
-        "요구 필드와 최소 길이: "
-        "summary (배열, 12~18개 bullet, 각 bullet은 주어+동사 있는 2~3문장, 최소 60자 이상, 세부 내용/숫자/사례/인용/결론 포함, 키워드 나열과 반복 금지), "
-        "outline (배열, 8~12개 bullet, 각 bullet은 1~2문장, 흐름을 단계별로 자세히, 키워드 나열과 반복 금지), "
-        "action_items (배열, 5~8개, 주어+동사+기한/담당자/조건 포함 시 명시), "
-        "category, tags, related, context, importance. "
-        "한국어만 사용하고, 반복이나 중복을 피하며, 가능한 한 길고 문장형으로 자세히 작성하라."
+        "너는 한국어 강의 전사문을 학습용 노트로 정리하는 전문 기록자다. "
+        "전사문에 없는 개념, 예시, 결론, 수치, 인명, 용어, 과제는 절대 만들지 마라. "
+        "불명확한 부분은 추측하지 말고 전사 불명확 또는 확인 필요라고 표시하라. "
+        "강의 흐름, 핵심 개념의 정의, 개념 간 관계, 예시, 결론을 전사문에 근거해 꼼꼼히 정리하라. "
+        "전문용어, 영문 약어, 공식, 모델명, 논문명, 사람 이름, 날짜, 숫자는 원문 표기를 유지하라. "
+        "JSON 객체 하나만 반환하고, JSON 밖 설명이나 Markdown 코드블록은 쓰지 마라."
     )
     if PROMPT_PATH.exists():
         try:
@@ -141,6 +347,15 @@ def read_system_prompt() -> str:
         except Exception:
             return default_prompt
     return default_prompt
+
+
+def normalize_llm_model(model: Optional[str]) -> str:
+    selected = str(model or "").strip()
+    if not selected:
+        return LLM_MODEL
+    if not re.fullmatch(r"[A-Za-z0-9._:-]{1,80}", selected):
+        raise ValueError("LLM 모델명은 영문, 숫자, 점, 밑줄, 하이픈, 콜론만 사용할 수 있습니다.")
+    return selected
 
 
 def slugify_title(title: str) -> str:
@@ -214,12 +429,18 @@ def run_whisper(video_path: Path) -> Dict[str, Any]:
         raise FileNotFoundError(f"whisper script not found: {WHISPER_SCRIPT}")
 
     cmd = [
-        "python",
+        sys.executable,
         str(WHISPER_SCRIPT),
         str(video_path),
         "-O",
         str(OUTPUT_ROOT),
+        "-m",
+        WHISPER_MODEL,
+        "-c",
+        WHISPER_COMPUTE,
     ]
+    if WHISPER_GPU_IDS and WHISPER_GPU_IDS.lower() != "auto":
+        cmd.extend(["--gpu-ids", WHISPER_GPU_IDS])
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"Whisper failed: {result.stderr.strip()}")
@@ -245,9 +466,64 @@ def run_whisper(video_path: Path) -> Dict[str, Any]:
     }
 
 
-def call_ollama_summarize(text: str, rules: Optional[str] = None) -> Dict[str, Any]:
-    """Summarize transcript via Ollama. Prefer Markdown sections; fallback to raw."""
+def _extract_json_object(raw: str) -> Optional[Dict[str, Any]]:
+    cleaned = str(raw or "").strip()
+    if cleaned.startswith("```"):
+        lines = cleaned.splitlines()
+        if len(lines) >= 3 and lines[-1].strip() == "```":
+            cleaned = "\n".join(lines[1:-1]).strip()
+    try:
+        parsed = json.loads(cleaned)
+        return parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError:
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start == -1 or end <= start:
+            return None
+        try:
+            parsed = json.loads(cleaned[start:end + 1])
+            return parsed if isinstance(parsed, dict) else None
+        except json.JSONDecodeError:
+            return None
+
+
+def _coerce_message_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict):
+                if item.get("type") == "text":
+                    parts.append(str(item.get("text", "")).strip())
+                elif "text" in item:
+                    parts.append(str(item["text"]).strip())
+                elif "content" in item:
+                    parts.append(str(item["content"]).strip())
+        return "\n".join(part for part in parts if part).strip()
+    return str(content or "").strip()
+
+
+def call_chatmock_summarize(text: str, rules: Optional[str] = None, model: Optional[str] = None) -> Dict[str, Any]:
+    """Summarize transcript via a ChatMock/OpenAI-compatible endpoint."""
     system_prompt = read_system_prompt()
+    schema_instruction = (
+        "반드시 JSON 객체 하나만 반환하라. Markdown 코드블록, 설명 문장, 내부 추론은 출력하지 마라. "
+        "전사문에 없는 내용을 보충하거나 일반 지식으로 확장하지 마라. "
+        "내용이 불명확하면 추측하지 말고 전사 불명확 또는 확인 필요라고 명시하라. "
+        "필드는 summary, outline, action_items, category, tags, related, context, importance 를 사용하라. "
+        "summary는 전사문 근거가 분명한 자세한 한국어 문장 배열로 작성하라. "
+        "outline은 강의 순서를 따라 주제와 세부 내용을 함께 정리한 한국어 문장 배열로 작성하라. "
+        "action_items는 실제 과제가 아니라 복습할 내용, 확인할 전사 구간, 다시 봐야 할 개념 중심으로 작성하라. "
+        "category는 study를 기본값으로 사용하되 ai, research, project, thesis, resources, memo, daily 중 더 적절하면 선택하라."
+    )
+    system_prompt = f"{system_prompt}\n\n{schema_instruction}"
+    if rules:
+        system_prompt = (
+            f"{system_prompt}\n\n"
+            "아래 Obsidian 저장 규칙을 참고하되, JSON 출력 형식과 충돌하면 JSON 형식을 우선하라.\n"
+            f"{rules.strip()}"
+        )
 
     def _parse_markdown_sections(raw: str) -> Optional[Dict[str, Any]]:
         sections = {"summary": [], "outline": [], "action_items": [], "meta": {}}
@@ -352,8 +628,9 @@ def call_ollama_summarize(text: str, rules: Optional[str] = None) -> Dict[str, A
             "raw_md": data.get("raw_md"),
         }
 
+    selected_model = normalize_llm_model(model)
     payload = {
-        "model": OLLAMA_MODEL,
+        "model": selected_model,
         "messages": [
             {
                 "role": "system",
@@ -361,21 +638,60 @@ def call_ollama_summarize(text: str, rules: Optional[str] = None) -> Dict[str, A
             },
             {
                 "role": "user",
-                "content": text,
+                "content": (
+                    "다음 전사문을 강의 학습 노트로 아주 자세히 구조화하라. "
+                    "전사문에 없는 내용은 절대 추가하지 말고, 원문의 용어와 수치를 보존하라.\n\n"
+                    f"{text}"
+                ),
             },
         ],
-        "stream": False,
-        "options": {"temperature": 0.1},
+        "temperature": 0.1,
     }
-    resp = requests.post(f"{OLLAMA_ENDPOINT}/api/chat", json=payload, timeout=240)
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {LLM_API_KEY}",
+    }
+    try:
+        resp = requests.post(
+            f"{LLM_BASE_URL}/chat/completions",
+            json=payload,
+            headers=headers,
+            timeout=LLM_TIMEOUT,
+        )
+    except requests.RequestException as exc:
+        raise RuntimeError(
+            "ChatMock 분석 서버에 연결할 수 없습니다. "
+            "`chatmock serve`를 실행했는지, LLM_BASE_URL이 "
+            f"{LLM_BASE_URL!r}로 맞는지 확인하세요. 원인: {exc}"
+        ) from exc
     if resp.status_code != 200:
-        raise RuntimeError(f"Ollama HTTP {resp.status_code}: {resp.text}")
-    content = resp.json().get("message", {}).get("content", "")
+        raise RuntimeError(f"ChatMock HTTP {resp.status_code}: {resp.text}")
+    try:
+        response_payload = resp.json()
+    except ValueError as exc:
+        raise RuntimeError(f"ChatMock returned non-JSON response: {resp.text[:300]}") from exc
+
+    choices = response_payload.get("choices") or []
+    if not choices:
+        raise RuntimeError(f"ChatMock returned no choices: {response_payload}")
+    content = _coerce_message_text(choices[0].get("message", {}).get("content", ""))
+    if not content:
+        raise RuntimeError(f"ChatMock returned empty content: {response_payload}")
+
+    parsed_json = _extract_json_object(content)
+    if parsed_json:
+        result = _normalize(parsed_json, content)
+        result["llm_model"] = selected_model
+        return result
     parsed = _parse_markdown_sections(content)
     if parsed:
-        return _normalize(parsed, content)
+        result = _normalize(parsed, content)
+        result["llm_model"] = selected_model
+        return result
     # Fallback: keep raw markdown in summary
-    return _normalize({"raw_md": content, "summary": [content]}, content)
+    result = _normalize({"raw_md": content, "summary": [content]}, content)
+    result["llm_model"] = selected_model
+    return result
 
 
 def _as_bullets(item: Any) -> str:
@@ -405,6 +721,7 @@ def write_note(
     action_block = _as_bullets(action_list)
     context = llm_result.get("context") or f"Auto-generated from transcript {source_path.name}"
     importance = llm_result.get("importance") or "normal"
+    llm_model = llm_result.get("llm_model") or LLM_MODEL
 
     txt_path = transcript_meta.get("txt_path")
     srt_path = transcript_meta.get("srt_path")
@@ -424,6 +741,7 @@ def write_note(
     meta_lines = [
         "---",
         f"category: {category}",
+        f"llm_model: {llm_model}",
         f"related: [{', '.join(related)}]",
         f"summary: \"{summary_clean[:200]}\"",
         "---",
@@ -460,7 +778,7 @@ def write_note(
     return note_path
 
 
-def process_job(job_id: str, uploaded_path: Path, original_name: str):
+def process_job(job_id: str, uploaded_path: Path, original_name: str, llm_model: str):
     with jobs_lock:
         jobs[job_id]["status"] = "running"
         jobs[job_id]["stage"] = "transcribing"
@@ -473,7 +791,7 @@ def process_job(job_id: str, uploaded_path: Path, original_name: str):
             jobs[job_id]["updated_at"] = time.time()
             save_job_to_db(jobs[job_id])
         rules_text = read_system_rules()
-        llm_result = call_ollama_summarize(whisper_result["full_text"], rules=rules_text)
+        llm_result = call_chatmock_summarize(whisper_result["full_text"], rules=rules_text, model=llm_model)
         with jobs_lock:
             jobs[job_id]["stage"] = "writing_note"
             jobs[job_id]["updated_at"] = time.time()
@@ -504,13 +822,15 @@ def process_job(job_id: str, uploaded_path: Path, original_name: str):
             save_job_to_db(jobs[job_id])
 
 
-def enqueue_job(video_path: Path, original_name: str) -> str:
+def enqueue_job(video_path: Path, original_name: str, llm_model: Optional[str] = None) -> str:
     job_id = uuid.uuid4().hex
+    selected_model = normalize_llm_model(llm_model)
     with jobs_lock:
         jobs[job_id] = {
             "id": job_id,
             "filename": original_name,
             "stored_path": str(video_path),
+            "llm_model": selected_model,
             "status": "pending",
             "created_at": time.time(),
             "updated_at": time.time(),
@@ -521,7 +841,7 @@ def enqueue_job(video_path: Path, original_name: str) -> str:
         }
         save_job_to_db(jobs[job_id])
     threading.Thread(
-        target=process_job, args=(job_id, video_path, original_name), daemon=True
+        target=process_job, args=(job_id, video_path, original_name, selected_model), daemon=True
     ).start()
     return job_id
 
@@ -529,6 +849,240 @@ def enqueue_job(video_path: Path, original_name: str) -> str:
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/login", include_in_schema=False)
+def login_page(request: Request):
+    if current_user(request):
+        return RedirectResponse(url="/ui")
+    if LOGIN_PATH.exists():
+        return HTMLResponse(LOGIN_PATH.read_text(encoding="utf-8"))
+    return HTMLResponse("<h1>Login page missing</h1>", status_code=500)
+
+
+@app.post("/auth/register")
+def register(payload: Dict[str, str] = Body(...)):
+    username = str(payload.get("username") or "").strip()
+    display_name = str(payload.get("display_name") or username).strip() or username
+    password = str(payload.get("password") or "")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{3,32}", username):
+        raise HTTPException(status_code=400, detail="아이디는 영문, 숫자, 점, 밑줄, 하이픈 3~32자로 입력하세요.")
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="비밀번호는 8자 이상이어야 합니다.")
+    with auth_lock:
+        existing = db_conn.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
+        if existing:
+            raise HTTPException(status_code=409, detail="이미 존재하는 아이디입니다.")
+        db_conn.execute(
+            """
+            INSERT INTO users (id, username, display_name, password_hash, role, status, created_at, approved_at)
+            VALUES (?, ?, ?, ?, 'user', 'pending', ?, NULL)
+            """,
+            (uuid.uuid4().hex, username, display_name, hash_password(password), time.time()),
+        )
+        db_conn.commit()
+    return {"status": "pending", "message": "가입 요청이 접수되었습니다. 관리자 승인 후 로그인할 수 있습니다."}
+
+
+@app.post("/auth/login")
+def login(payload: Dict[str, str] = Body(...)):
+    username = str(payload.get("username") or "").strip()
+    password = str(payload.get("password") or "")
+    row = db_conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+    if not row or not verify_password(password, row["password_hash"]):
+        raise HTTPException(status_code=401, detail="아이디 또는 비밀번호가 올바르지 않습니다.")
+    user = dict(row)
+    if user.get("status") != "active":
+        raise HTTPException(status_code=403, detail="관리자 승인 후 로그인할 수 있습니다.")
+    token = create_session(user["id"])
+    response = JSONResponse({"status": "ok", "user": public_user(user)})
+    response.set_cookie(
+        SESSION_COOKIE_NAME,
+        token,
+        max_age=SESSION_TTL_SECONDS,
+        httponly=True,
+        samesite="lax",
+    )
+    return response
+
+
+@app.post("/auth/logout")
+def logout(request: Request):
+    clear_session(request.cookies.get(SESSION_COOKIE_NAME))
+    response = JSONResponse({"status": "ok"})
+    response.delete_cookie(SESSION_COOKIE_NAME)
+    return response
+
+
+@app.get("/auth/me")
+def me(request: Request):
+    user = current_user(request)
+    return {"user": public_user(user) if user else None}
+
+
+@app.get("/admin/users")
+def admin_users(request: Request):
+    require_admin(request)
+    rows = db_conn.execute("SELECT * FROM users ORDER BY created_at DESC").fetchall()
+    return [public_user(dict(row)) for row in rows]
+
+
+@app.post("/admin/users/{user_id}/approve")
+def approve_user(user_id: str, request: Request):
+    require_admin(request)
+    with auth_lock:
+        row = db_conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="user not found")
+        db_conn.execute(
+            "UPDATE users SET status = 'active', approved_at = ? WHERE id = ?",
+            (time.time(), user_id),
+        )
+        db_conn.commit()
+    return {"status": "approved", "user_id": user_id}
+
+
+@app.post("/admin/users/{user_id}/reject")
+def reject_user(user_id: str, request: Request):
+    admin = require_admin(request)
+    with auth_lock:
+        row = db_conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="user not found")
+        if row["id"] == admin["id"]:
+            raise HTTPException(status_code=400, detail="관리자 본인은 거절할 수 없습니다.")
+        db_conn.execute("UPDATE users SET status = 'rejected' WHERE id = ?", (user_id,))
+        db_conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        db_conn.commit()
+    return {"status": "rejected", "user_id": user_id}
+
+
+@app.get("/system/gpu")
+def system_gpu():
+    """Return real-time GPU usage for the web dashboard."""
+    if not shutil.which("nvidia-smi"):
+        return {
+            "available": False,
+            "error": "nvidia-smi command not found",
+            "checked_at": time.time(),
+            "whisper": {
+                "model": WHISPER_MODEL,
+                "compute": WHISPER_COMPUTE,
+                "gpu_ids": WHISPER_GPU_IDS,
+            },
+        }
+
+    query = [
+        "index",
+        "name",
+        "memory.total",
+        "memory.used",
+        "memory.free",
+        "utilization.gpu",
+        "temperature.gpu",
+        "power.draw",
+        "power.limit",
+    ]
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                f"--query-gpu={','.join(query)}",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=True,
+        )
+    except Exception as exc:
+        return {
+            "available": False,
+            "error": str(exc),
+            "checked_at": time.time(),
+            "whisper": {
+                "model": WHISPER_MODEL,
+                "compute": WHISPER_COMPUTE,
+                "gpu_ids": WHISPER_GPU_IDS,
+            },
+        }
+
+    def as_float(value: str) -> Optional[float]:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    gpus = []
+    for line in result.stdout.strip().splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) != len(query):
+            continue
+        index, name, total, used, free, util, temp, power, power_limit = parts
+        try:
+            gpu_index = int(index)
+        except ValueError:
+            continue
+        gpus.append(
+            {
+                "index": gpu_index,
+                "name": name,
+                "memory_total_mb": as_float(total),
+                "memory_used_mb": as_float(used),
+                "memory_free_mb": as_float(free),
+                "utilization_gpu": as_float(util),
+                "temperature_c": as_float(temp),
+                "power_w": as_float(power),
+                "power_limit_w": as_float(power_limit),
+            }
+        )
+
+    return {
+        "available": bool(gpus),
+        "gpus": gpus,
+        "checked_at": time.time(),
+        "whisper": {
+            "model": WHISPER_MODEL,
+            "compute": WHISPER_COMPUTE,
+            "gpu_ids": WHISPER_GPU_IDS,
+        },
+    }
+
+
+@app.get("/llm/models")
+def llm_models():
+    """Return ChatMock/OpenAI-compatible model names for the dashboard selector."""
+    fallback = {
+        "available": False,
+        "models": DEFAULT_LLM_MODELS,
+        "default_model": LLM_MODEL,
+        "base_url": LLM_BASE_URL,
+    }
+    try:
+        resp = requests.get(
+            f"{LLM_BASE_URL}/models",
+            headers={"Authorization": f"Bearer {LLM_API_KEY}"},
+            timeout=3,
+        )
+    except requests.RequestException as exc:
+        return {**fallback, "error": str(exc)}
+    if resp.status_code != 200:
+        return {**fallback, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
+    try:
+        payload = resp.json()
+    except ValueError:
+        return {**fallback, "error": "Model endpoint returned non-JSON response"}
+    models = [
+        str(item.get("id") or "").strip()
+        for item in payload.get("data", [])
+        if isinstance(item, dict) and str(item.get("id") or "").strip()
+    ]
+    return {
+        "available": bool(models),
+        "models": models or DEFAULT_LLM_MODELS,
+        "default_model": LLM_MODEL,
+        "base_url": LLM_BASE_URL,
+    }
 
 
 @app.get("/", include_in_schema=False)
@@ -781,6 +1335,175 @@ DASHBOARD_HTML = """
     .muted {
       color: var(--text-muted);
       font-size: 13px;
+    }
+
+    /* GPU Monitor */
+    .gpu-card {
+      overflow: hidden;
+    }
+
+    .gpu-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .gpu-state {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 9px;
+      border-radius: 999px;
+      border: 1px solid var(--border-color);
+      background: var(--bg-primary);
+      color: var(--text-muted);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .gpu-state::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--text-muted);
+    }
+
+    .gpu-state.live {
+      color: var(--success);
+      border-color: var(--success);
+      background: var(--success-light);
+    }
+
+    .gpu-state.live::before {
+      background: var(--success);
+      box-shadow: 0 0 0 4px rgba(26, 127, 55, 0.12);
+    }
+
+    .gpu-state.offline {
+      color: var(--error);
+      border-color: var(--error);
+      background: var(--error-light);
+    }
+
+    .gpu-state.offline::before {
+      background: var(--error);
+    }
+
+    .gpu-device {
+      padding: 14px;
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      background: var(--bg-primary);
+    }
+
+    .gpu-device + .gpu-device {
+      margin-top: 12px;
+    }
+
+    .gpu-device-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .gpu-name {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text-primary);
+      line-height: 1.35;
+    }
+
+    .gpu-index {
+      color: var(--text-muted);
+      font-size: 12px;
+      margin-top: 2px;
+    }
+
+    .gpu-util {
+      font-size: 26px;
+      line-height: 1;
+      font-weight: 700;
+      color: var(--accent);
+      white-space: nowrap;
+    }
+
+    .gpu-grid {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .gpu-metric {
+      min-width: 0;
+    }
+
+    .gpu-label {
+      color: var(--text-muted);
+      font-size: 12px;
+      margin-bottom: 3px;
+    }
+
+    .gpu-value {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .gpu-meter {
+      width: 100%;
+      height: 7px;
+      margin-top: 7px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: var(--border-color);
+    }
+
+    .gpu-meter-fill {
+      height: 100%;
+      width: 0%;
+      border-radius: inherit;
+      background: var(--accent);
+      transition: width 0.35s ease;
+    }
+
+    .gpu-meta {
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border-color);
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+
+    .gpu-error {
+      padding: 14px;
+      border-radius: 6px;
+      border: 1px solid var(--error);
+      background: var(--error-light);
+      color: var(--error);
+      font-size: 13px;
+    }
+
+    @media (max-width: 520px) {
+      .gpu-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .gpu-device-head {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .gpu-util {
+        font-size: 22px;
+      }
     }
 
     /* Job List */
@@ -1231,6 +1954,16 @@ DASHBOARD_HTML = """
         <div id="status" class="status"></div>
       </div>
 
+      <div class="card gpu-card">
+        <div class="section-title gpu-title">
+          <span>Whisper GPU</span>
+          <span id="gpu-state" class="gpu-state">확인 중</span>
+        </div>
+        <div id="gpu-content">
+          <div class="muted">GPU 상태를 불러오는 중...</div>
+        </div>
+      </div>
+
       <div class="card">
         <div class="section-title">기존 업로드 파일</div>
         <div class="flex gap-10 mt-16">
@@ -1283,8 +2016,11 @@ DASHBOARD_HTML = """
     const processExistingBtn = document.getElementById("process-existing");
     const refreshFilesBtn = document.getElementById("refresh-files");
     const filesStatus = document.getElementById("files-status");
+    const gpuStateEl = document.getElementById("gpu-state");
+    const gpuContentEl = document.getElementById("gpu-content");
     let pollTimer = null;
     let autoRefreshTimer = null;
+    let gpuTimer = null;
 
     function statusBadge(status) {
       const map = {
@@ -1299,6 +2035,119 @@ DASHBOARD_HTML = """
 
     function setStatus(msg) {
       statusEl.textContent = msg;
+    }
+
+    function escapeHtml(value) {
+      const div = document.createElement("div");
+      div.textContent = value == null ? "" : String(value);
+      return div.innerHTML;
+    }
+
+    function formatGb(mb) {
+      const value = Number(mb);
+      if (!Number.isFinite(value)) return "-";
+      return `${(value / 1024).toFixed(1)} GB`;
+    }
+
+    function clampPercent(value) {
+      const number = Number(value);
+      if (!Number.isFinite(number)) return 0;
+      return Math.max(0, Math.min(100, number));
+    }
+
+    function renderGpuStatus(data) {
+      if (!gpuStateEl || !gpuContentEl) return;
+
+      if (!data || !data.available || !Array.isArray(data.gpus) || data.gpus.length === 0) {
+        gpuStateEl.textContent = "비활성";
+        gpuStateEl.className = "gpu-state offline";
+        gpuContentEl.innerHTML = `
+          <div class="gpu-error">
+            GPU 상태를 확인할 수 없습니다.<br>
+            <small>${escapeHtml(data?.error || "nvidia-smi 응답이 비어 있습니다.")}</small>
+          </div>
+          <div class="gpu-meta">
+            <span>Whisper ${escapeHtml(data?.whisper?.model || "large-v3")} / ${escapeHtml(data?.whisper?.compute || "float16")}</span>
+            <span>GPU ${escapeHtml(data?.whisper?.gpu_ids || "auto")}</span>
+          </div>
+        `;
+        return;
+      }
+
+      gpuStateEl.textContent = "실시간";
+      gpuStateEl.className = "gpu-state live";
+      const checkedAt = data.checked_at ? new Date(data.checked_at * 1000).toLocaleTimeString("ko-KR") : "-";
+      const cards = data.gpus.map((gpu) => {
+        const used = Number(gpu.memory_used_mb) || 0;
+        const total = Number(gpu.memory_total_mb) || 0;
+        const memoryPct = total > 0 ? clampPercent((used / total) * 100) : 0;
+        const gpuUtil = clampPercent(gpu.utilization_gpu);
+        const power = gpu.power_w == null ? null : Number(gpu.power_w);
+        const powerLimit = gpu.power_limit_w == null ? null : Number(gpu.power_limit_w);
+        const powerText = Number.isFinite(power) && Number.isFinite(powerLimit)
+          ? `${power.toFixed(0)} W / ${powerLimit.toFixed(0)} W`
+          : "-";
+        const temp = gpu.temperature_c == null ? null : Number(gpu.temperature_c);
+        const tempText = Number.isFinite(temp) ? `${temp.toFixed(0)}°C` : "-";
+
+        return `
+          <div class="gpu-device">
+            <div class="gpu-device-head">
+              <div>
+                <div class="gpu-name">${escapeHtml(gpu.name)}</div>
+                <div class="gpu-index">GPU ${escapeHtml(gpu.index)}</div>
+              </div>
+              <div class="gpu-util">${gpuUtil.toFixed(0)}%</div>
+            </div>
+            <div class="gpu-grid">
+              <div class="gpu-metric">
+                <div class="gpu-label">GPU 사용률</div>
+                <div class="gpu-value">${gpuUtil.toFixed(0)}%</div>
+                <div class="gpu-meter"><div class="gpu-meter-fill" style="width: ${gpuUtil}%"></div></div>
+              </div>
+              <div class="gpu-metric">
+                <div class="gpu-label">VRAM</div>
+                <div class="gpu-value">${formatGb(used)} / ${formatGb(total)}</div>
+                <div class="gpu-meter"><div class="gpu-meter-fill" style="width: ${memoryPct}%"></div></div>
+              </div>
+              <div class="gpu-metric">
+                <div class="gpu-label">여유 VRAM</div>
+                <div class="gpu-value">${formatGb(gpu.memory_free_mb)}</div>
+              </div>
+              <div class="gpu-metric">
+                <div class="gpu-label">온도 / 전력</div>
+                <div class="gpu-value">${tempText} · ${powerText}</div>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join("");
+
+      gpuContentEl.innerHTML = `
+        ${cards}
+        <div class="gpu-meta">
+          <span>Whisper ${escapeHtml(data.whisper?.model || "large-v3")} / ${escapeHtml(data.whisper?.compute || "float16")}</span>
+          <span>GPU ${escapeHtml(data.whisper?.gpu_ids || "auto")} · ${checkedAt}</span>
+        </div>
+      `;
+    }
+
+    async function fetchGpuStatus() {
+      if (!gpuStateEl || !gpuContentEl) return;
+      try {
+        const res = await fetch("/system/gpu", { cache: "no-store" });
+        if (!res.ok) throw new Error(`GPU API ${res.status}`);
+        const data = await res.json();
+        renderGpuStatus(data);
+      } catch (err) {
+        renderGpuStatus({ available: false, error: err.message });
+      }
+    }
+
+    function startGpuMonitor() {
+      if (gpuTimer) clearInterval(gpuTimer);
+      fetchGpuStatus();
+      gpuTimer = setInterval(fetchGpuStatus, 3000);
     }
 
     // 현재 렌더링된 작업들의 상태를 저장
@@ -2027,6 +2876,7 @@ DASHBOARD_HTML = """
     // 초기화
     fetchJobs();
     fetchFiles();
+    startGpuMonitor();
 
     // 페이지 로드 시 자동 새로고침 시작
     startAutoRefresh();
@@ -2038,11 +2888,17 @@ DASHBOARD_HTML = """
 
 @app.get("/ui", include_in_schema=False)
 def ui():
+    if DASHBOARD_PATH.exists():
+        return HTMLResponse(DASHBOARD_PATH.read_text(encoding="utf-8"))
     return HTMLResponse(DASHBOARD_HTML)
 
 
 @app.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(file: UploadFile = File(...), llm_model: str = Form(LLM_MODEL)):
+    try:
+        selected_model = normalize_llm_model(llm_model)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     original_name = Path(file.filename).name
     dest = make_unique_path(UPLOAD_DIR, original_name)
     try:
@@ -2051,7 +2907,7 @@ async def upload_file(file: UploadFile = File(...)):
     finally:
         file.file.close()
 
-    job_id = enqueue_job(dest, original_name)
+    job_id = enqueue_job(dest, original_name, selected_model)
     return {"job_id": job_id, "status": "queued"}
 
 
@@ -2182,7 +3038,10 @@ def process_existing(payload: Dict[str, str] = Body(...)):
         raise HTTPException(status_code=404, detail="file not found")
     if candidate.suffix.lower() not in SUPPORTED_EXTS:
         raise HTTPException(status_code=400, detail="unsupported file type")
-    job_id = enqueue_job(candidate, candidate.name)
+    try:
+        job_id = enqueue_job(candidate, candidate.name, payload.get("llm_model"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     return {"job_id": job_id, "status": "queued", "filename": candidate.name}
 
 

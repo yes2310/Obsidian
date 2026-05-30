@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NoteCraft 로그인</title>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --surface: #ffffff;
+      --line: #e8edf3;
+      --text: #191f28;
+      --sub: #4e5968;
+      --muted: #8b95a1;
+      --blue: #3182f6;
+      --blue-dark: #1b64da;
+      --blue-soft: #eaf3ff;
+      --red: #f04452;
+      --red-soft: #fff0f1;
+      --green: #1bc47d;
+      --green-soft: #e8f8f1;
+      --radius: 8px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", "Apple SD Gothic Neo", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      padding: 28px;
+      background:
+        radial-gradient(circle at top right, rgba(49, 130, 246, 0.13), transparent 30rem),
+        var(--bg);
+      color: var(--text);
+    }
+
+    .shell {
+      width: min(100%, 430px);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 22px;
+    }
+
+    .mark {
+      width: 46px;
+      height: 46px;
+      border-radius: var(--radius);
+      display: grid;
+      place-items: center;
+      background: var(--text);
+      color: #fff;
+      font-weight: 900;
+      font-size: 20px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 28px;
+      line-height: 1.12;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .card {
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: 0 18px 45px rgba(25, 31, 40, 0.07);
+    }
+
+    .tabs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      padding: 4px;
+      margin-bottom: 20px;
+      border-radius: var(--radius);
+      background: #f1f4f8;
+    }
+
+    .tab {
+      min-height: 42px;
+      border: 0;
+      border-radius: var(--radius);
+      background: transparent;
+      color: var(--sub);
+      cursor: pointer;
+      font-weight: 800;
+    }
+
+    .tab.active {
+      background: var(--surface);
+      color: var(--text);
+      box-shadow: 0 4px 14px rgba(25, 31, 40, 0.08);
+    }
+
+    .form {
+      display: grid;
+      gap: 12px;
+    }
+
+    .form[hidden] {
+      display: none;
+    }
+
+    label {
+      display: grid;
+      gap: 7px;
+      color: var(--sub);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    input {
+      width: 100%;
+      min-height: 48px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 0 14px;
+      color: var(--text);
+      outline: none;
+      font: inherit;
+      transition: border-color 0.18s ease, box-shadow 0.18s ease;
+    }
+
+    input:focus {
+      border-color: var(--blue);
+      box-shadow: 0 0 0 4px rgba(49, 130, 246, 0.14);
+    }
+
+    .primary {
+      min-height: 48px;
+      border: 0;
+      border-radius: var(--radius);
+      background: var(--blue);
+      color: #fff;
+      cursor: pointer;
+      font: inherit;
+      font-weight: 900;
+    }
+
+    .primary:hover {
+      background: var(--blue-dark);
+    }
+
+    .message {
+      display: none;
+      margin-top: 14px;
+      padding: 13px 14px;
+      border-radius: var(--radius);
+      background: var(--blue-soft);
+      color: var(--blue-dark);
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .message.show {
+      display: block;
+    }
+
+    .message.bad {
+      background: var(--red-soft);
+      color: var(--red);
+    }
+
+    .message.ok {
+      background: var(--green-soft);
+      color: #0c9b61;
+    }
+
+    .note {
+      margin-top: 16px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    @media (max-width: 520px) {
+      body { padding: 18px; }
+      .card { padding: 18px; }
+      h1 { font-size: 24px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="brand">
+      <div class="mark" aria-hidden="true">N</div>
+      <div>
+        <h1>NoteCraft</h1>
+        <div class="subtitle">로그인 후 강의 노트를 생성합니다</div>
+      </div>
+    </div>
+
+    <section class="card">
+      <div class="tabs" role="tablist">
+        <button id="login-tab" class="tab active" type="button">로그인</button>
+        <button id="register-tab" class="tab" type="button">가입 요청</button>
+      </div>
+
+      <form id="login-form" class="form">
+        <label>
+          아이디
+          <input id="login-username" autocomplete="username" required />
+        </label>
+        <label>
+          비밀번호
+          <input id="login-password" type="password" autocomplete="current-password" required />
+        </label>
+        <button class="primary" type="submit">로그인</button>
+      </form>
+
+      <form id="register-form" class="form" hidden>
+        <label>
+          이름
+          <input id="register-display-name" autocomplete="name" required />
+        </label>
+        <label>
+          아이디
+          <input id="register-username" autocomplete="username" placeholder="영문/숫자 3자 이상" required />
+        </label>
+        <label>
+          비밀번호
+          <input id="register-password" type="password" autocomplete="new-password" placeholder="8자 이상" required />
+        </label>
+        <button class="primary" type="submit">가입 요청 보내기</button>
+      </form>
+
+      <div id="message" class="message"></div>
+      <p class="note">새 계정은 관리자의 승인을 받은 뒤 로그인할 수 있습니다.</p>
+    </section>
+  </main>
+
+  <script>
+    const loginTab = document.getElementById("login-tab");
+    const registerTab = document.getElementById("register-tab");
+    const loginForm = document.getElementById("login-form");
+    const registerForm = document.getElementById("register-form");
+    const message = document.getElementById("message");
+
+    function setMode(mode) {
+      const isLogin = mode === "login";
+      loginTab.classList.toggle("active", isLogin);
+      registerTab.classList.toggle("active", !isLogin);
+      loginForm.hidden = !isLogin;
+      registerForm.hidden = isLogin;
+      setMessage("");
+    }
+
+    function setMessage(text, type = "") {
+      message.textContent = text;
+      message.className = `message ${text ? "show" : ""} ${type}`;
+    }
+
+    async function postJson(url, payload) {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "요청에 실패했습니다.");
+      return data;
+    }
+
+    loginTab.addEventListener("click", () => setMode("login"));
+    registerTab.addEventListener("click", () => setMode("register"));
+
+    loginForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      setMessage("로그인 중입니다.");
+      try {
+        await postJson("/auth/login", {
+          username: document.getElementById("login-username").value.trim(),
+          password: document.getElementById("login-password").value,
+        });
+        window.location.href = "/ui";
+      } catch (err) {
+        setMessage(err.message, "bad");
+      }
+    });
+
+    registerForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      setMessage("가입 요청을 보내는 중입니다.");
+      try {
+        await postJson("/auth/register", {
+          display_name: document.getElementById("register-display-name").value.trim(),
+          username: document.getElementById("register-username").value.trim(),
+          password: document.getElementById("register-password").value,
+        });
+        setMessage("가입 요청이 접수되었습니다. 관리자 승인 후 로그인할 수 있습니다.", "ok");
+        registerForm.reset();
+      } catch (err) {
+        setMessage(err.message, "bad");
+      }
+    });
+
+    fetch("/auth/me")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.user) window.location.href = "/ui";
+      })
+      .catch(() => {});
+  </script>
+</body>
+</html>

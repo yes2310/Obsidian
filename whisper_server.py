@@ -78,6 +78,42 @@ def recommend_batch_size(free_mb: int, model_name: str, compute_type: str) -> in
     return max(1, min(batch, 32))
 
 
+def parse_gpu_ids(value: str) -> list[int]:
+    gpu_ids = []
+    for raw in value.split(","):
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            gpu_ids.append(int(raw))
+        except ValueError as exc:
+            raise ValueError(f"GPU ID는 숫자와 쉼표로만 입력하세요: {value}") from exc
+    if not gpu_ids:
+        raise ValueError("GPU ID 목록이 비어 있습니다.")
+    return gpu_ids
+
+
+def select_gpus(gpus: list[dict], gpu_ids_value: str | None, gpu_count: int | None) -> list[dict]:
+    if not gpus:
+        raise RuntimeError("nvidia-smi에서 사용 가능한 GPU를 찾지 못했습니다.")
+
+    idx_to_gpu = {g["index"]: g for g in gpus}
+    if gpu_ids_value:
+        wanted = parse_gpu_ids(gpu_ids_value)
+    else:
+        requested_count = gpu_count if gpu_count and gpu_count > 0 else len(gpus)
+        if requested_count > len(gpus):
+            print(f"⚠️ 요청한 GPU {requested_count}개 중 사용 가능 GPU는 {len(gpus)}개입니다. 가능한 GPU만 사용합니다.")
+        wanted = [g["index"] for g in gpus[:max(1, min(requested_count, len(gpus)))]]
+
+    missing = [i for i in wanted if i not in idx_to_gpu]
+    if missing:
+        available = ", ".join(str(g["index"]) for g in gpus)
+        raise ValueError(f"요청한 GPU 인덱스가 존재하지 않습니다: {missing} (사용 가능: {available})")
+
+    return [idx_to_gpu[i] for i in wanted]
+
+
 def _numeric_select(files, input_dir: Path):
     print(f"\n📂 {input_dir} 영상 목록")
     for i, f in enumerate(files, 1):
@@ -270,26 +306,28 @@ def worker(args):
         }
 
 
-def progress_monitor(progress_queue: mp.Queue, num_gpus: int, stop_event: mp.Event):
+def progress_monitor(progress_queue: mp.Queue, gpu_ids: list[int], stop_event: mp.Event):
     """tqdm 진행률 모니터"""
     from tqdm import tqdm
     
     bars = {}
-    for i in range(num_gpus):
-        bars[i] = tqdm(
+    for position, gpu_id in enumerate(gpu_ids):
+        bars[gpu_id] = tqdm(
             total=100,
-            desc=f"GPU {i}",
-            position=i,
+            desc=f"GPU {gpu_id}",
+            position=position,
             leave=True,
             bar_format="{desc}: {bar:30} {percentage:3.0f}% | {postfix}"
         )
-        bars[i].set_postfix_str("대기중")
+        bars[gpu_id].set_postfix_str("대기중")
     
     while not stop_event.is_set():
         try:
             msg = progress_queue.get(timeout=0.3)
             gpu = msg["gpu"]
             status = msg["status"]
+            if gpu not in bars:
+                continue
             
             if status == "loading":
                 bars[gpu].set_postfix_str("모델 로딩...")
@@ -331,6 +369,8 @@ def main():
                         choices=["tiny", "base", "small", "medium", 
                                  "large-v1", "large-v2", "large-v3"])
     parser.add_argument("-g", "--gpus", type=int, default=None)
+    parser.add_argument("--gpu-ids", default=os.environ.get("WHISPER_GPU_IDS"),
+                        help="사용할 GPU 인덱스 목록. 예: 0 또는 0,1 (기본: 사용 가능한 GPU 자동 선택)")
     parser.add_argument("-c", "--compute", default="float16",
                         choices=["float16", "int8_float16", "int8"])
     args = parser.parse_args()
@@ -382,13 +422,9 @@ def main():
     print(f"📁 결과 폴더: {output_path.parent}")
     
     gpus = get_gpu_info()
-    wanted = [0, 3]
-    idx_to_gpu = {g["index"]: g for g in gpus}
-    missing = [i for i in wanted if i not in idx_to_gpu]
-    if missing:
-        raise ValueError(f"요청한 GPU 인덱스가 존재하지 않습니다: {missing}")
-    gpus_in_use = [idx_to_gpu[i] for i in wanted]
+    gpus_in_use = select_gpus(gpus, args.gpu_ids, args.gpus)
     num_gpus = len(gpus_in_use)
+    gpu_ids = [gpu["index"] for gpu in gpus_in_use]
 
     batch_sizes = []
     for gpu in gpus_in_use:
@@ -438,7 +474,7 @@ def main():
     progress_queue = manager.Queue()
     stop_event = manager.Event()
     
-    monitor = mp.Process(target=progress_monitor, args=(progress_queue, num_gpus, stop_event))
+    monitor = mp.Process(target=progress_monitor, args=(progress_queue, gpu_ids, stop_event))
     monitor.start()
     
     start_time = time.time()
