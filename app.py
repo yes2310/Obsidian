@@ -334,12 +334,12 @@ def read_system_rules() -> Optional[str]:
 def read_system_prompt() -> str:
     """Load custom system prompt from PROMPT_PATH if present, else default."""
     default_prompt = (
-        "너는 한국어 강의 전사문을 학습용 노트로 정리하는 전문 기록자다. "
-        "전사문에 없는 개념, 예시, 결론, 수치, 인명, 용어, 과제는 절대 만들지 마라. "
+        "너는 한국어 강의 전사문을 학습용 요점정리 노트로 재구성하는 전문 기록자다. "
+        "전사문에 없는 개념, 예시, 결론, 수치, 인명, 용어, 과제, 교수자의 의도는 절대 새로 만들지 마라. "
         "불명확한 부분은 추측하지 말고 전사 불명확 또는 확인 필요라고 표시하라. "
-        "강의 흐름, 핵심 개념의 정의, 개념 간 관계, 예시, 결론을 전사문에 근거해 꼼꼼히 정리하라. "
+        "단순 bullet 목록이 아니라 강의 흐름, 핵심 개념, 비교표, 복습 질문이 있는 실제 학습 노트로 구조화하라. "
         "전문용어, 영문 약어, 공식, 모델명, 논문명, 사람 이름, 날짜, 숫자는 원문 표기를 유지하라. "
-        "JSON 객체 하나만 반환하고, JSON 밖 설명이나 Markdown 코드블록은 쓰지 마라."
+        "JSON 객체 하나만 반환하고 JSON 밖 설명이나 Markdown 코드블록은 쓰지 마라."
     )
     if PROMPT_PATH.exists():
         try:
@@ -406,8 +406,6 @@ def ensure_tags(tags: List[str], category: str) -> List[str]:
 def ensure_related(related: List[str]) -> List[str]:
     rel = [r for r in related if r]
     rel = [r.strip() for r in rel if r.strip()]
-    while len(rel) < 2:
-        rel.append(f"related/placeholder-{len(rel)+1}")
     return rel[:5]
 
 
@@ -504,6 +502,35 @@ def _coerce_message_text(content: Any) -> str:
     return str(content or "").strip()
 
 
+def coerce_text_list(value: Any) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(x).strip() for x in value if str(x).strip()]
+    if isinstance(value, str):
+        parts = [p.strip() for p in value.splitlines() if p.strip()]
+        if len(parts) <= 1:
+            parts = re.split(r"(?<=[.!?])\s+", value)
+        return [p.strip(" -•\t") for p in parts if p and p.strip()]
+    return [str(value).strip()] if str(value).strip() else []
+
+
+def coerce_dict_list(value: Any, keys: List[str]) -> List[Dict[str, Any]]:
+    result: List[Dict[str, Any]] = []
+    if value is None:
+        return result
+    items = value if isinstance(value, list) else [value]
+    for item in items:
+        if isinstance(item, dict):
+            result.append({key: item.get(key, "") for key in keys})
+        else:
+            text = str(item).strip()
+            if text:
+                first_key = keys[0] if keys else "value"
+                result.append({first_key: text})
+    return result
+
+
 def call_chatmock_summarize(text: str, rules: Optional[str] = None, model: Optional[str] = None) -> Dict[str, Any]:
     """Summarize transcript via a ChatMock/OpenAI-compatible endpoint."""
     system_prompt = read_system_prompt()
@@ -511,10 +538,15 @@ def call_chatmock_summarize(text: str, rules: Optional[str] = None, model: Optio
         "반드시 JSON 객체 하나만 반환하라. Markdown 코드블록, 설명 문장, 내부 추론은 출력하지 마라. "
         "전사문에 없는 내용을 보충하거나 일반 지식으로 확장하지 마라. "
         "내용이 불명확하면 추측하지 말고 전사 불명확 또는 확인 필요라고 명시하라. "
-        "필드는 summary, outline, action_items, category, tags, related, context, importance 를 사용하라. "
-        "summary는 전사문 근거가 분명한 자세한 한국어 문장 배열로 작성하라. "
-        "outline은 강의 순서를 따라 주제와 세부 내용을 함께 정리한 한국어 문장 배열로 작성하라. "
-        "action_items는 실제 과제가 아니라 복습할 내용, 확인할 전사 구간, 다시 봐야 할 개념 중심으로 작성하라. "
+        "필드는 title, overview, key_points, concepts, comparison_tables, process_flow, must_remember, review_questions, "
+        "unclear_parts, action_items, category, tags, related, context, importance 를 사용하라. "
+        "overview는 강의 전체를 4~6문장 문단으로 설명하라. "
+        "key_points는 heading, detail, evidence 필드를 가진 객체 6~10개로 작성하라. "
+        "concepts는 term, definition, explanation, example, caution 필드를 가진 객체 5~12개로 작성하라. "
+        "comparison_tables는 비교할 수 있는 개념이 있을 때만 title, columns, rows 구조로 작성하고 억지로 만들지 마라. "
+        "process_flow는 순서가 있는 강의 내용이 있을 때만 step, name, description 구조로 작성하라. "
+        "must_remember는 반드시 기억할 내용을 배열로, review_questions는 question/answer 객체 5~8개로 작성하라. "
+        "unclear_parts는 없으면 빈 배열로 두고, action_items는 복습할 개념이나 확인할 전사 구간 중심으로 작성하라. "
         "category는 study를 기본값으로 사용하되 ai, research, project, thesis, resources, memo, daily 중 더 적절하면 선택하라."
     )
     system_prompt = f"{system_prompt}\n\n{schema_instruction}"
@@ -573,23 +605,20 @@ def call_chatmock_summarize(text: str, rules: Optional[str] = None, model: Optio
         summary = data.get("summary") or []
         outline = data.get("outline") or []
         action_items = data.get("action_items") or data.get("actions") or []
+        title = data.get("title") or data.get("lecture_title") or ""
+        overview = data.get("overview") or data.get("lecture_overview") or ""
+        key_points = data.get("key_points") or data.get("keypoints") or []
+        concepts = data.get("concepts") or data.get("terms") or []
+        comparison_tables = data.get("comparison_tables") or data.get("tables") or []
+        process_flow = data.get("process_flow") or data.get("flow") or []
+        must_remember = data.get("must_remember") or data.get("remember") or []
+        review_questions = data.get("review_questions") or data.get("questions") or []
+        unclear_parts = data.get("unclear_parts") or data.get("unclear") or []
         category = data.get("category") or data.get("cat") or "ai"
         tags = data.get("tags") or []
         related = data.get("related") or []
         context = data.get("context") or "Auto-generated from transcript"
         importance = data.get("importance") or "normal"
-
-        def _coerce_list(value):
-            if value is None:
-                return []
-            if isinstance(value, list):
-                return [str(x).strip() for x in value if str(x).strip()]
-            if isinstance(value, str):
-                parts = [p.strip() for p in value.splitlines() if p.strip()]
-                if len(parts) <= 1:
-                    parts = re.split(r"(?<=[.!?])\s+", value)
-                return [p.strip(" -•\t") for p in parts if p and p.strip()]
-            return [str(value).strip()]
 
         if isinstance(action_items, str):
             action_items = [
@@ -599,14 +628,9 @@ def call_chatmock_summarize(text: str, rules: Optional[str] = None, model: Optio
             ]
         if not isinstance(action_items, list):
             action_items = [str(action_items)]
-        # Normalize to lists and expand if too short
-        summary_list = _coerce_list(summary)
-        outline_list = _coerce_list(outline)
-        action_items = action_items if isinstance(action_items, list) else _coerce_list(action_items)
-
-        summary_list = _coerce_list(summary)
-        outline_list = _coerce_list(outline)
-        action_items = action_items if isinstance(action_items, list) else _coerce_list(action_items)
+        summary_list = coerce_text_list(summary)
+        outline_list = coerce_text_list(outline)
+        action_items = action_items if isinstance(action_items, list) else coerce_text_list(action_items)
 
         if isinstance(tags, str):
             tags = [t.strip() for t in tags.split(",") if t.strip()]
@@ -617,6 +641,15 @@ def call_chatmock_summarize(text: str, rules: Optional[str] = None, model: Optio
         if not isinstance(related, list):
             related = [str(related)]
         return {
+            "title": str(title).strip(),
+            "overview": str(overview).strip(),
+            "key_points": coerce_dict_list(key_points, ["heading", "detail", "evidence"]),
+            "concepts": coerce_dict_list(concepts, ["term", "definition", "explanation", "example", "caution"]),
+            "comparison_tables": coerce_dict_list(comparison_tables, ["title", "columns", "rows"]),
+            "process_flow": coerce_dict_list(process_flow, ["step", "name", "description"]),
+            "must_remember": coerce_text_list(must_remember),
+            "review_questions": coerce_dict_list(review_questions, ["question", "answer"]),
+            "unclear_parts": coerce_text_list(unclear_parts),
             "summary": summary_list,
             "outline": outline_list,
             "action_items": action_items,
@@ -639,7 +672,7 @@ def call_chatmock_summarize(text: str, rules: Optional[str] = None, model: Optio
             {
                 "role": "user",
                 "content": (
-                    "다음 전사문을 강의 학습 노트로 아주 자세히 구조화하라. "
+                    "다음 전사문을 표와 섹션이 있는 강의 요점정리 노트로 아주 자세히 구조화하라. "
                     "전사문에 없는 내용은 절대 추가하지 말고, 원문의 용어와 수치를 보존하라.\n\n"
                     f"{text}"
                 ),
@@ -698,8 +731,56 @@ def _as_bullets(item: Any) -> str:
     if item is None:
         return ""
     if isinstance(item, list):
-        return "\n".join(f"- {str(x).strip()}" for x in item)
+        lines = []
+        for value in item:
+            if isinstance(value, dict):
+                text = " / ".join(str(v).strip() for v in value.values() if str(v).strip())
+            else:
+                text = str(value).strip()
+            if text:
+                lines.append(f"- {text}")
+        return "\n".join(lines)
     return "\n".join(f"- {line.strip()}" for line in str(item).splitlines() if line.strip())
+
+
+def _md_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _table_cell(value: Any) -> str:
+    return _md_text(value).replace("|", "\\|").replace("\n", "<br>") or "-"
+
+
+def _markdown_table(headers: List[str], rows: List[List[Any]]) -> str:
+    clean_headers = [_table_cell(header) for header in headers]
+    clean_rows = []
+    for row in rows:
+        values = list(row)
+        if len(values) < len(clean_headers):
+            values.extend([""] * (len(clean_headers) - len(values)))
+        clean_rows.append([_table_cell(value) for value in values[:len(clean_headers)]])
+    if not clean_headers or not clean_rows:
+        return ""
+    lines = [
+        "| " + " | ".join(clean_headers) + " |",
+        "| " + " | ".join(["---"] * len(clean_headers)) + " |",
+    ]
+    lines.extend("| " + " | ".join(row) + " |" for row in clean_rows)
+    return "\n".join(lines)
+
+
+def _normalize_table_rows(columns: List[str], rows: Any) -> List[List[Any]]:
+    if not isinstance(rows, list):
+        return []
+    normalized = []
+    for row in rows:
+        if isinstance(row, dict):
+            normalized.append([row.get(column, "") for column in columns])
+        elif isinstance(row, list):
+            normalized.append(row)
+        else:
+            normalized.append([row])
+    return normalized
 
 
 def write_note(
@@ -709,10 +790,19 @@ def write_note(
     llm_result: Dict[str, Any],
 ) -> Path:
     """Render and save Obsidian-friendly Markdown following SystemRules."""
-    category_raw = str(llm_result.get("category") or "ai").lower()
-    category = category_raw if category_raw in CATEGORY_FOLDER else "ai"
+    category_raw = str(llm_result.get("category") or "study").lower()
+    category = category_raw if category_raw in CATEGORY_FOLDER else "study"
     tags = ensure_tags(llm_result.get("tags") or [], category)
     related = ensure_related(llm_result.get("related") or [])
+    note_title = _md_text(llm_result.get("title")) or title
+    overview = _md_text(llm_result.get("overview"))
+    key_points = llm_result.get("key_points") or []
+    concepts = llm_result.get("concepts") or []
+    comparison_tables = llm_result.get("comparison_tables") or []
+    process_flow = llm_result.get("process_flow") or []
+    must_remember = llm_result.get("must_remember") or []
+    review_questions = llm_result.get("review_questions") or []
+    unclear_parts = llm_result.get("unclear_parts") or []
     summary_list = llm_result.get("summary") or []
     outline_list = llm_result.get("outline") or []
     action_list = llm_result.get("action_items") or []
@@ -730,10 +820,10 @@ def write_note(
     now = time.strftime("%Y-%m-%d %H:%M")
     file_slug = slugify_title(title)
     note_id = f"{category}-{file_slug}-{uuid.uuid4().hex[:6]}"
-    summary_meta_src = summary_list if isinstance(summary_list, list) else []
+    summary_meta_src = [overview] if overview else (summary_list if isinstance(summary_list, list) else [])
     if not summary_meta_src and summary_block:
         summary_meta_src = [line.strip("- ").strip() for line in summary_block.splitlines() if line.strip()]
-    summary_meta = " ".join(summary_meta_src[:3]) if summary_meta_src else (summary_block or "- (empty)")
+    summary_meta = " ".join(str(item) for item in summary_meta_src[:3]) if summary_meta_src else (summary_block or "- (empty)")
     summary_clean = summary_meta.replace("\"", "").replace("\n", " ")
     context_clean = str(context).replace("\"", "").replace("\n", " ")
 
@@ -749,26 +839,104 @@ def write_note(
 
     raw_md = llm_result.get("raw_md")
     if raw_md:
-        body = [raw_md.strip(), "", "## Transcript", f"- txt: {txt_path}" if txt_path else "",
+        body = [f"# {note_title}", "", raw_md.strip(), "", "## 원문 파일", f"- txt: {txt_path}" if txt_path else "",
                 f"- srt: {srt_path}" if srt_path else "", f"- json: {json_path}" if json_path else ""]
     else:
-        body = [
-            "## Summary",
-            summary_block or "- (empty)",
-            "",
-            "## Outline",
-            outline_block or "- (empty)",
-            "",
-            "## Action Items",
-            action_block or "- (empty)",
-            "",
-            "## Transcript",
+        body = [f"# {note_title}", ""]
+
+        if overview:
+            body.extend(["## 한눈에 보는 강의 개요", overview, ""])
+        elif summary_block:
+            body.extend(["## 한눈에 보는 강의 개요", summary_block, ""])
+
+        if key_points:
+            body.append("## 핵심 요점")
+            for idx, point in enumerate(key_points, 1):
+                if isinstance(point, dict):
+                    heading = _md_text(point.get("heading")) or f"요점 {idx}"
+                    detail = _md_text(point.get("detail"))
+                    evidence = _md_text(point.get("evidence"))
+                    body.extend([f"### {idx}. {heading}", detail or "-", f"- 근거: {evidence}" if evidence else "- 근거: 확인 필요", ""])
+                else:
+                    body.extend([f"### {idx}. 요점", _md_text(point), ""])
+        elif outline_block:
+            body.extend(["## 핵심 요점", outline_block, ""])
+
+        if concepts:
+            concept_rows = []
+            for concept in concepts:
+                if isinstance(concept, dict):
+                    concept_rows.append([
+                        concept.get("term", ""),
+                        concept.get("definition", ""),
+                        concept.get("explanation", ""),
+                        concept.get("example", ""),
+                        concept.get("caution", ""),
+                    ])
+                else:
+                    concept_rows.append([concept, "", "", "", ""])
+            table = _markdown_table(["개념", "정의", "설명", "예시", "주의점"], concept_rows)
+            if table:
+                body.extend(["## 핵심 개념 정리", table, ""])
+
+        if comparison_tables:
+            body.append("## 비교 정리")
+            for idx, table_data in enumerate(comparison_tables, 1):
+                if not isinstance(table_data, dict):
+                    continue
+                columns = coerce_text_list(table_data.get("columns"))
+                rows = table_data.get("rows") or []
+                if not columns or not rows:
+                    continue
+                table = _markdown_table(columns, _normalize_table_rows(columns, rows))
+                if table:
+                    body.extend([f"### {table_data.get('title') or f'비교표 {idx}'}", table, ""])
+
+        if process_flow:
+            flow_rows = []
+            for item in process_flow:
+                if isinstance(item, dict):
+                    flow_rows.append([item.get("step", ""), item.get("name", ""), item.get("description", "")])
+                else:
+                    flow_rows.append(["", item, ""])
+            table = _markdown_table(["단계", "이름", "설명"], flow_rows)
+            if table:
+                body.extend(["## 강의 흐름", table, ""])
+
+        remember_block = _as_bullets(must_remember)
+        if remember_block:
+            body.extend(["## 반드시 기억할 내용", remember_block, ""])
+
+        if review_questions:
+            question_rows = []
+            for item in review_questions:
+                if isinstance(item, dict):
+                    question_rows.append([item.get("question", ""), item.get("answer", "")])
+                else:
+                    question_rows.append([item, ""])
+            table = _markdown_table(["질문", "답"], question_rows)
+            if table:
+                body.extend(["## 복습 질문", table, ""])
+
+        unclear_block = _as_bullets(unclear_parts)
+        if unclear_block:
+            body.extend(["## 확인 필요", unclear_block, ""])
+
+        action_block = _as_bullets(action_list)
+        if action_block:
+            body.extend(["## 복습 액션", action_block, ""])
+
+        if not any([overview, key_points, concepts, comparison_tables, process_flow, must_remember, review_questions]) and summary_block:
+            body.extend(["## Summary", summary_block, "", "## Outline", outline_block or "- (empty)", ""])
+
+        body.extend([
+            "## 원문 파일",
             f"- txt: {txt_path}" if txt_path else "",
             f"- srt: {srt_path}" if srt_path else "",
             f"- json: {json_path}" if json_path else "",
-        ]
+        ])
 
-    content = "\n".join([line for line in body + meta_lines if line != ""])
+    content = "\n".join([line for line in meta_lines + [""] + body if line != ""])
 
     # Determine storage path per SystemRules
     base_dir = VAULT_DIR / "지식창고" / CATEGORY_FOLDER.get(category, "AI")
