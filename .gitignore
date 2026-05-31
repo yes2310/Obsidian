@@ -10,6 +10,8 @@ __pycache__/
 logs/
 ollama.log
 jobs.db
+*.db-shm
+*.db-wal
 uploads/
 output/
 input/
