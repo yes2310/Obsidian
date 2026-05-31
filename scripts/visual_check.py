@@ -9,6 +9,16 @@ import time
 from pathlib import Path
 from urllib.request import urlopen
 
+ROOT = Path(__file__).resolve().parents[1]
+PROJECT_PYTHON = ROOT / ".venv" / "bin" / "python"
+if (
+    PROJECT_PYTHON.exists()
+    and Path(sys.prefix).resolve() != (ROOT / ".venv").resolve()
+    and not os.environ.get("NOTECRAFT_VISUAL_REEXEC")
+):
+    os.environ["NOTECRAFT_VISUAL_REEXEC"] = "1"
+    os.execv(str(PROJECT_PYTHON), [str(PROJECT_PYTHON), str(Path(__file__).resolve()), *sys.argv[1:]])
+
 try:
     from playwright.sync_api import sync_playwright
 except ImportError:
@@ -17,8 +27,6 @@ except ImportError:
     print("  .venv/bin/python -m playwright install chromium", file=sys.stderr)
     raise
 
-
-ROOT = Path(__file__).resolve().parents[1]
 PASSWORD = "visual-test-password"
 ARTIFACT_DIR = ROOT / "artifacts" / "visual"
 

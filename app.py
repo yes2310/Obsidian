@@ -601,6 +601,90 @@ def coerce_dict_list(value: Any, keys: List[str]) -> List[Dict[str, Any]]:
     return result
 
 
+def coerce_paragraph_list(value: Any) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        parts: List[str] = []
+        for item in value:
+            if isinstance(item, dict):
+                text = item.get("text") or item.get("content") or item.get("paragraph") or item.get("body")
+                if isinstance(text, list):
+                    parts.extend(coerce_paragraph_list(text))
+                elif str(text or "").strip():
+                    parts.append(str(text).strip())
+            elif str(item or "").strip():
+                parts.append(str(item).strip())
+        return parts
+    if isinstance(value, str):
+        blocks = [block.strip() for block in re.split(r"\n\s*\n", value) if block.strip()]
+        if len(blocks) > 1:
+            return blocks
+        lines = [line.strip() for line in value.splitlines() if line.strip()]
+        return lines if lines else ([value.strip()] if value.strip() else [])
+    text = str(value).strip()
+    return [text] if text else []
+
+
+def coerce_table_list(value: Any) -> List[Dict[str, Any]]:
+    tables: List[Dict[str, Any]] = []
+    if value is None:
+        return tables
+    items = value if isinstance(value, list) else [value]
+    for item in items:
+        if isinstance(item, dict):
+            tables.append({
+                "title": item.get("title") or item.get("name") or "",
+                "columns": item.get("columns") or item.get("headers") or [],
+                "rows": item.get("rows") or item.get("data") or [],
+            })
+        elif str(item or "").strip():
+            tables.append({"title": "", "columns": ["내용"], "rows": [[str(item).strip()]]})
+    return tables
+
+
+def coerce_section_list(value: Any) -> List[Dict[str, Any]]:
+    sections: List[Dict[str, Any]] = []
+    if value is None:
+        return sections
+    items = value if isinstance(value, list) else [value]
+    for idx, item in enumerate(items, 1):
+        if isinstance(item, dict):
+            body = (
+                item.get("body")
+                or item.get("paragraphs")
+                or item.get("content")
+                or item.get("description")
+                or []
+            )
+            sections.append({
+                "title": str(item.get("title") or item.get("heading") or f"{idx}페이지. 강의 정리").strip(),
+                "intro": str(item.get("intro") or item.get("summary") or "").strip(),
+                "body": coerce_paragraph_list(body),
+                "tables": coerce_table_list(item.get("tables") or item.get("table")),
+                "formulas": coerce_dict_list(item.get("formulas") or item.get("equations"), ["formula", "explanation"]),
+                "code_blocks": coerce_dict_list(item.get("code_blocks") or item.get("codes"), ["language", "code", "explanation"]),
+                "examples": coerce_dict_list(item.get("examples"), ["title", "content", "explanation"]),
+                "process": item.get("process") or item.get("steps") or [],
+                "takeaways": coerce_text_list(item.get("takeaways") or item.get("must_remember")),
+            })
+        else:
+            text = str(item).strip()
+            if text:
+                sections.append({
+                    "title": f"{idx}페이지. 강의 정리",
+                    "intro": "",
+                    "body": [text],
+                    "tables": [],
+                    "formulas": [],
+                    "code_blocks": [],
+                    "examples": [],
+                    "process": [],
+                    "takeaways": [],
+                })
+    return sections
+
+
 def call_chatmock_summarize(text: str, rules: Optional[str] = None, model: Optional[str] = None) -> Dict[str, Any]:
     """Summarize transcript via a ChatMock/OpenAI-compatible endpoint."""
     system_prompt = read_system_prompt()
@@ -608,14 +692,15 @@ def call_chatmock_summarize(text: str, rules: Optional[str] = None, model: Optio
         "반드시 JSON 객체 하나만 반환하라. Markdown 코드블록, 설명 문장, 내부 추론은 출력하지 마라. "
         "전사문에 없는 내용을 보충하거나 일반 지식으로 확장하지 마라. "
         "내용이 불명확하면 추측하지 말고 전사 불명확 또는 확인 필요라고 명시하라. "
-        "필드는 title, overview, key_points, concepts, comparison_tables, process_flow, must_remember, review_questions, "
-        "unclear_parts, action_items, category, tags, related, context, importance 를 사용하라. "
-        "overview는 강의 전체를 4~6문장 문단으로 설명하라. "
-        "key_points는 heading, detail, evidence 필드를 가진 객체 6~10개로 작성하라. "
-        "concepts는 term, definition, explanation, example, caution 필드를 가진 객체 5~12개로 작성하라. "
-        "comparison_tables는 비교할 수 있는 개념이 있을 때만 title, columns, rows 구조로 작성하고 억지로 만들지 마라. "
-        "process_flow는 순서가 있는 강의 내용이 있을 때만 step, name, description 구조로 작성하라. "
-        "must_remember는 반드시 기억할 내용을 배열로, review_questions는 question/answer 객체 5~8개로 작성하라. "
+        "필드는 title, scope, overview, flow, sections, concept_tables, comparison_tables, final_summary, "
+        "review_questions, unclear_parts, action_items, category, tags, related, context, importance 를 사용하라. "
+        "overview는 강의 전체를 3~6개 문단으로 설명하고, flow는 강의 전개 순서를 번호 목록으로 만들 수 있게 배열로 작성하라. "
+        "sections는 강의 단원별 객체 배열이며 title, intro, body, tables, formulas, code_blocks, examples, process, takeaways를 포함하라. "
+        "각 section의 body는 가능한 한 2개 이상의 문단형 설명으로 작성하고 한 줄 bullet 나열을 피하라. "
+        "tables는 용어, 기호, 모델 비교, 단계 구분처럼 표가 자연스러운 내용에 사용하라. "
+        "formulas와 code_blocks는 전사문에 수식, 계산식, 코드, 모델 구조, 계층 흐름이 있을 때만 작성하라. "
+        "examples는 전사문에 나온 예시만 사용하라. concept_tables와 comparison_tables는 title, columns, rows 구조로 작성하라. "
+        "final_summary는 반드시 기억할 내용을 배열로, review_questions는 question/answer 객체 5~8개로 작성하라. "
         "unclear_parts는 없으면 빈 배열로 두고, action_items는 복습할 개념이나 확인할 전사 구간 중심으로 작성하라. "
         "category는 study를 기본값으로 사용하되 ai, research, project, thesis, resources, memo, daily 중 더 적절하면 선택하라."
     )
@@ -676,12 +761,22 @@ def call_chatmock_summarize(text: str, rules: Optional[str] = None, model: Optio
         outline = data.get("outline") or []
         action_items = data.get("action_items") or data.get("actions") or []
         title = data.get("title") or data.get("lecture_title") or ""
+        scope = data.get("scope") or {}
         overview = data.get("overview") or data.get("lecture_overview") or ""
+        flow = data.get("flow") or data.get("overall_flow") or []
+        sections = data.get("sections") or data.get("lecture_sections") or data.get("pages") or []
+        concept_tables = data.get("concept_tables") or data.get("concept_table") or []
+        final_summary = data.get("final_summary") or data.get("must_remember") or data.get("remember") or []
         key_points = data.get("key_points") or data.get("keypoints") or []
         concepts = data.get("concepts") or data.get("terms") or []
         comparison_tables = data.get("comparison_tables") or data.get("tables") or []
-        process_flow = data.get("process_flow") or data.get("flow") or []
-        must_remember = data.get("must_remember") or data.get("remember") or []
+        process_flow = data.get("process_flow") or []
+        if not process_flow and not sections and isinstance(data.get("flow"), list):
+            flow_items = data.get("flow") or []
+            if any(isinstance(item, dict) and ("step" in item or "name" in item or "description" in item) for item in flow_items):
+                process_flow = flow_items
+                flow = []
+        must_remember = data.get("must_remember") or data.get("remember") or final_summary
         review_questions = data.get("review_questions") or data.get("questions") or []
         unclear_parts = data.get("unclear_parts") or data.get("unclear") or []
         category = data.get("category") or data.get("cat") or "ai"
@@ -710,14 +805,25 @@ def call_chatmock_summarize(text: str, rules: Optional[str] = None, model: Optio
             related = [r.strip() for r in related.split(",") if r.strip()]
         if not isinstance(related, list):
             related = [str(related)]
+        if not isinstance(scope, dict):
+            scope = {"topic": str(scope)}
         return {
             "title": str(title).strip(),
-            "overview": str(overview).strip(),
+            "scope": {
+                "range": str(scope.get("range") or scope.get("source") or "").strip(),
+                "topic": str(scope.get("topic") or scope.get("subject") or "").strip(),
+                "format": str(scope.get("format") or "").strip(),
+            },
+            "overview": "\n\n".join(coerce_paragraph_list(overview)),
+            "flow": coerce_text_list(flow),
+            "sections": coerce_section_list(sections),
+            "concept_tables": coerce_table_list(concept_tables),
             "key_points": coerce_dict_list(key_points, ["heading", "detail", "evidence"]),
             "concepts": coerce_dict_list(concepts, ["term", "definition", "explanation", "example", "caution"]),
             "comparison_tables": coerce_dict_list(comparison_tables, ["title", "columns", "rows"]),
             "process_flow": coerce_dict_list(process_flow, ["step", "name", "description"]),
             "must_remember": coerce_text_list(must_remember),
+            "final_summary": coerce_text_list(final_summary),
             "review_questions": coerce_dict_list(review_questions, ["question", "answer"]),
             "unclear_parts": coerce_text_list(unclear_parts),
             "summary": summary_list,
@@ -742,7 +848,8 @@ def call_chatmock_summarize(text: str, rules: Optional[str] = None, model: Optio
             {
                 "role": "user",
                 "content": (
-                    "다음 전사문을 표와 섹션이 있는 강의 요점정리 노트로 아주 자세히 구조화하라. "
+                    "다음 전사문을 Notion에 붙여넣기 쉬운 교재형 강의 요점정리 노트로 아주 자세히 구조화하라. "
+                    "전체 흐름, 단원별 문단 설명, 표, 수식/코드블록, 예시, 마지막 정리를 포함하되 "
                     "전사문에 없는 내용은 절대 추가하지 말고, 원문의 용어와 수치를 보존하라.\n\n"
                     f"{text}"
                 ),
@@ -852,6 +959,133 @@ def _normalize_table_rows(columns: List[str], rows: Any) -> List[List[Any]]:
     return normalized
 
 
+def _as_numbered(item: Any) -> str:
+    if item is None:
+        return ""
+    values = item if isinstance(item, list) else coerce_text_list(item)
+    lines = []
+    for idx, value in enumerate(values, 1):
+        if isinstance(value, dict):
+            text = " - ".join(str(v).strip() for v in value.values() if str(v).strip())
+        else:
+            text = str(value).strip()
+        if text:
+            lines.append(f"{idx}. {text}")
+    return "\n".join(lines)
+
+
+def _markdown_code_block(language: Any, code: Any) -> str:
+    safe_language = re.sub(r"[^A-Za-z0-9_+.-]", "", str(language or "text").strip()) or "text"
+    safe_code = str(code or "").strip().replace("```", "'''")
+    if not safe_code:
+        return ""
+    return f"```{safe_language}\n{safe_code}\n```"
+
+
+def _append_table_blocks(body: List[str], tables: Any, default_title: str = "표") -> None:
+    for idx, table_data in enumerate(coerce_table_list(tables), 1):
+        columns = coerce_text_list(table_data.get("columns"))
+        rows = table_data.get("rows") or []
+        if not columns or not rows:
+            continue
+        table = _markdown_table(columns, _normalize_table_rows(columns, rows))
+        if not table:
+            continue
+        title = _md_text(table_data.get("title")) or f"{default_title} {idx}"
+        body.extend([f"### {title}", table, ""])
+
+
+def _append_formula_blocks(body: List[str], formulas: Any) -> None:
+    items = coerce_dict_list(formulas, ["formula", "explanation"])
+    if not items:
+        return
+    emitted_heading = False
+    for item in items:
+        formula = _markdown_code_block("text", item.get("formula"))
+        explanation = _md_text(item.get("explanation"))
+        if not formula and not explanation:
+            continue
+        if not emitted_heading:
+            body.extend(["### 수식/계산 흐름", ""])
+            emitted_heading = True
+        if formula:
+            body.extend([formula, ""])
+        if explanation:
+            body.extend([explanation, ""])
+
+
+def _append_code_blocks(body: List[str], code_blocks: Any) -> None:
+    items = coerce_dict_list(code_blocks, ["language", "code", "explanation"])
+    if not items:
+        return
+    emitted_heading = False
+    for item in items:
+        code = _markdown_code_block(item.get("language") or "text", item.get("code"))
+        explanation = _md_text(item.get("explanation"))
+        if not code and not explanation:
+            continue
+        if not emitted_heading:
+            body.extend(["### 코드/구현 흐름", ""])
+            emitted_heading = True
+        if code:
+            body.extend([code, ""])
+        if explanation:
+            body.extend([explanation, ""])
+
+
+def _append_examples(body: List[str], examples: Any) -> None:
+    items = coerce_dict_list(examples, ["title", "content", "explanation"])
+    if not items:
+        return
+    emitted_heading = False
+    for idx, item in enumerate(items, 1):
+        content = _md_text(item.get("content"))
+        explanation = _md_text(item.get("explanation"))
+        if not content and not explanation:
+            continue
+        if not emitted_heading:
+            body.extend(["### 강의 예시", ""])
+            emitted_heading = True
+        title = _md_text(item.get("title")) or f"예시 {idx}"
+        body.extend([f"#### {title}"])
+        if content:
+            body.extend([content, ""])
+        if explanation:
+            body.extend([f"- 의미: {explanation}", ""])
+
+
+def _section_heading(title: str, idx: int) -> str:
+    clean_title = title.strip() or f"{idx}페이지. 강의 정리"
+    if clean_title.startswith("#"):
+        return clean_title
+    if "페이지" in clean_title[:12]:
+        return f"# {clean_title}"
+    if re.match(r"^\d+[\).]\s*", clean_title):
+        return f"## {clean_title}"
+    return f"## {idx}. {clean_title}"
+
+
+def _append_study_sections(body: List[str], sections: Any) -> None:
+    for idx, section in enumerate(coerce_section_list(sections), 1):
+        title = _md_text(section.get("title")) or f"{idx}페이지. 강의 정리"
+        body.extend([_section_heading(title, idx), ""])
+        intro = _md_text(section.get("intro"))
+        if intro:
+            body.extend([intro, ""])
+        for paragraph in coerce_paragraph_list(section.get("body")):
+            body.extend([paragraph, ""])
+        _append_table_blocks(body, section.get("tables"), default_title="정리표")
+        _append_formula_blocks(body, section.get("formulas"))
+        _append_code_blocks(body, section.get("code_blocks"))
+        _append_examples(body, section.get("examples"))
+        process_block = _as_numbered(section.get("process"))
+        if process_block:
+            body.extend(["### 단계 흐름", process_block, ""])
+        takeaways_block = _as_bullets(section.get("takeaways"))
+        if takeaways_block:
+            body.extend(["### 이 단원 핵심 정리", takeaways_block, ""])
+
+
 def write_note(
     title: str,
     source_path: Path,
@@ -864,7 +1098,12 @@ def write_note(
     tags = ensure_tags(llm_result.get("tags") or [], category)
     related = ensure_related(llm_result.get("related") or [])
     note_title = _md_text(llm_result.get("title")) or title
+    scope = llm_result.get("scope") or {}
     overview = _md_text(llm_result.get("overview"))
+    flow = llm_result.get("flow") or []
+    sections = llm_result.get("sections") or []
+    concept_tables = llm_result.get("concept_tables") or []
+    final_summary = llm_result.get("final_summary") or []
     key_points = llm_result.get("key_points") or []
     concepts = llm_result.get("concepts") or []
     comparison_tables = llm_result.get("comparison_tables") or []
@@ -913,12 +1152,31 @@ def write_note(
     else:
         body = [f"# {note_title}", ""]
 
-        if overview:
-            body.extend(["## 한눈에 보는 강의 개요", overview, ""])
-        elif summary_block:
-            body.extend(["## 한눈에 보는 강의 개요", summary_block, ""])
+        if isinstance(scope, dict):
+            scope_lines = []
+            if _md_text(scope.get("range")):
+                scope_lines.append(f"> **범위**: {_md_text(scope.get('range'))}")
+            if _md_text(scope.get("topic")):
+                scope_lines.append(f"> **주제**: {_md_text(scope.get('topic'))}")
+            if _md_text(scope.get("format")):
+                scope_lines.append(f"> **형식**: {_md_text(scope.get('format'))}")
+            if scope_lines:
+                body.extend(scope_lines + ["", "---", ""])
 
-        if key_points:
+        if overview or flow:
+            body.append("## 전체 흐름 한눈에 보기")
+            if overview:
+                for paragraph in coerce_paragraph_list(overview):
+                    body.extend([paragraph, ""])
+            flow_block = _as_numbered(flow)
+            if flow_block:
+                body.extend(["### 강의 전개", flow_block, ""])
+        elif summary_block:
+            body.extend(["## 전체 흐름 한눈에 보기", summary_block, ""])
+
+        if sections:
+            _append_study_sections(body, sections)
+        elif key_points:
             body.append("## 핵심 요점")
             for idx, point in enumerate(key_points, 1):
                 if isinstance(point, dict):
@@ -931,7 +1189,11 @@ def write_note(
         elif outline_block:
             body.extend(["## 핵심 요점", outline_block, ""])
 
-        if concepts:
+        if concept_tables:
+            body.append("## 핵심 개념 표")
+            _append_table_blocks(body, concept_tables, default_title="개념표")
+
+        if concepts and not concept_tables:
             concept_rows = []
             for concept in concepts:
                 if isinstance(concept, dict):
@@ -950,16 +1212,7 @@ def write_note(
 
         if comparison_tables:
             body.append("## 비교 정리")
-            for idx, table_data in enumerate(comparison_tables, 1):
-                if not isinstance(table_data, dict):
-                    continue
-                columns = coerce_text_list(table_data.get("columns"))
-                rows = table_data.get("rows") or []
-                if not columns or not rows:
-                    continue
-                table = _markdown_table(columns, _normalize_table_rows(columns, rows))
-                if table:
-                    body.extend([f"### {table_data.get('title') or f'비교표 {idx}'}", table, ""])
+            _append_table_blocks(body, comparison_tables, default_title="비교표")
 
         if process_flow:
             flow_rows = []
@@ -972,9 +1225,9 @@ def write_note(
             if table:
                 body.extend(["## 강의 흐름", table, ""])
 
-        remember_block = _as_bullets(must_remember)
+        remember_block = _as_bullets(final_summary or must_remember)
         if remember_block:
-            body.extend(["## 반드시 기억할 내용", remember_block, ""])
+            body.extend(["## 마지막 핵심 정리", remember_block, ""])
 
         if review_questions:
             question_rows = []
@@ -995,7 +1248,7 @@ def write_note(
         if action_block:
             body.extend(["## 복습 액션", action_block, ""])
 
-        if not any([overview, key_points, concepts, comparison_tables, process_flow, must_remember, review_questions]) and summary_block:
+        if not any([overview, flow, sections, key_points, concepts, concept_tables, comparison_tables, process_flow, must_remember, review_questions]) and summary_block:
             body.extend(["## Summary", summary_block, "", "## Outline", outline_block or "- (empty)", ""])
 
         body.extend([
@@ -1005,7 +1258,7 @@ def write_note(
             f"- json: {json_path}" if json_path else "",
         ])
 
-    content = "\n".join([line for line in meta_lines + [""] + body if line != ""])
+    content = "\n".join(meta_lines + [""] + body).rstrip() + "\n"
 
     # Determine storage path per SystemRules
     base_dir = VAULT_DIR / "지식창고" / CATEGORY_FOLDER.get(category, "AI")
