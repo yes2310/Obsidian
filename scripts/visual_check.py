@@ -133,7 +133,32 @@ def collect_metrics(page):
     )
 
 
-def assert_layout(name: str, metrics: dict) -> list[str]:
+def verify_note_scroll_preservation(page) -> dict:
+    target = page.evaluate(
+        """
+        () => {
+          const note = document.querySelector('.note-content');
+          if (!note) return 0;
+          const maxScroll = Math.max(0, note.scrollHeight - note.clientHeight);
+          note.scrollTop = Math.min(900, maxScroll);
+          return note.scrollTop;
+        }
+        """
+    )
+    page.click("#refresh-all")
+    page.wait_for_timeout(900)
+    restored = page.evaluate(
+        """
+        () => {
+          const note = document.querySelector('.note-content');
+          return note ? note.scrollTop : 0;
+        }
+        """
+    )
+    return {"target": target, "restored": restored}
+
+
+def assert_layout(name: str, metrics: dict, expect_code_block: bool) -> list[str]:
     failures = []
     viewport_width = metrics["viewportWidth"]
     if metrics["docScrollWidth"] > viewport_width + 1:
@@ -156,12 +181,17 @@ def assert_layout(name: str, metrics: dict) -> list[str]:
         failures.append(f"{name}: duplicate ordered-list marker is visible")
     if metrics["tableCount"] < 1:
         failures.append(f"{name}: markdown table was not rendered")
-    if metrics["codeBlockCount"] < 1:
+    if expect_code_block and metrics["codeBlockCount"] < 1:
         failures.append(f"{name}: markdown code block was not rendered")
     for key in ("card", "panel", "action"):
         rect = metrics[key]
         if rect and rect["right"] > viewport_width + 1:
             failures.append(f"{name}: {key} exceeds viewport right edge")
+    scroll = metrics.get("noteScrollPreservation") or {}
+    if scroll.get("target", 0) > 0 and scroll.get("restored", 0) + 8 < scroll.get("target", 0):
+        failures.append(
+            f"{name}: note scroll reset after refresh {scroll.get('restored')} < {scroll.get('target')}"
+        )
     return failures
 
 
@@ -175,6 +205,7 @@ def main() -> None:
     )
     if not note_path.exists():
         raise FileNotFoundError(f"No note file found for visual check: {note_path}")
+    expect_code_block = "```" in note_path.read_text(encoding="utf-8")
 
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
@@ -241,11 +272,12 @@ def main() -> None:
                     page.wait_for_timeout(800)
 
                     metrics = collect_metrics(page)
+                    metrics["noteScrollPreservation"] = verify_note_scroll_preservation(page)
                     screenshot = ARTIFACT_DIR / f"{name}-dashboard.png"
                     page.screenshot(path=str(screenshot), full_page=True)
                     print(f"[{name}] screenshot: {screenshot}")
                     print(f"[{name}] metrics: {metrics}")
-                    failures.extend(assert_layout(name, metrics))
+                    failures.extend(assert_layout(name, metrics, expect_code_block))
                     context.close()
                 browser.close()
 

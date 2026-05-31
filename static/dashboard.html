@@ -1073,6 +1073,7 @@
       jobs: [],
       expandedNotes: new Set(),
       noteCache: new Map(),
+      noteScrollTops: new Map(),
       activeJob: null,
       llmModel: localStorage.getItem("notecraft.llmModel") || "gpt-5.4",
       user: null,
@@ -1453,7 +1454,32 @@
         .sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
     }
 
+    function captureNoteScrollTops() {
+      const values = new Map();
+      els.jobList.querySelectorAll(".note-panel[id^='note-'] .note-content").forEach((note) => {
+        const panel = note.closest(".note-panel[id^='note-']");
+        if (!panel) return;
+        const jobId = panel.id.replace(/^note-/, "");
+        values.set(jobId, note.scrollTop);
+        state.noteScrollTops.set(jobId, note.scrollTop);
+      });
+      return values;
+    }
+
+    function restoreNoteScrollTops(values = new Map()) {
+      requestAnimationFrame(() => {
+        els.jobList.querySelectorAll(".note-panel[id^='note-'] .note-content").forEach((note) => {
+          const panel = note.closest(".note-panel[id^='note-']");
+          if (!panel || panel.hidden) return;
+          const jobId = panel.id.replace(/^note-/, "");
+          const scrollTop = values.has(jobId) ? values.get(jobId) : state.noteScrollTops.get(jobId);
+          if (Number.isFinite(scrollTop)) note.scrollTop = scrollTop;
+        });
+      });
+    }
+
     function renderJobs() {
+      const noteScrollTops = captureNoteScrollTops();
       const list = filteredJobs();
       updateStats(state.jobs);
       if (!list.length) {
@@ -1465,6 +1491,7 @@
             </div>
           </div>
         `;
+        state.noteScrollTops.clear();
         mountIcons();
         return;
       }
@@ -1522,6 +1549,7 @@
         `;
       }).join("");
       mountIcons();
+      restoreNoteScrollTops(noteScrollTops);
     }
 
     async function fetchJobs() {
@@ -1937,6 +1965,13 @@
           setStatus(err.message, "bad");
         }
       });
+      els.jobList.addEventListener("scroll", (event) => {
+        const note = event.target.closest ? event.target.closest(".note-content") : null;
+        if (!note || !els.jobList.contains(note)) return;
+        const panel = note.closest(".note-panel[id^='note-']");
+        if (!panel) return;
+        state.noteScrollTops.set(panel.id.replace(/^note-/, ""), note.scrollTop);
+      }, true);
       els.userRequests.addEventListener("click", async (event) => {
         const button = event.target.closest("button[data-action]");
         if (!button) return;
