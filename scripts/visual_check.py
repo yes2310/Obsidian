@@ -119,6 +119,11 @@ def collect_metrics(page):
             noteTextStart: text.slice(0, 140),
             hasFrontmatter: /(^|\\n)(category:|llm_model:|related: \\[|transcript_json:|transcript_txt:|transcript_srt:|source:)/m.test(text),
             hasLocalPath: /(^|\\s)\\/home\\//m.test(text),
+            hasRawHeadingMarker: /(^|\\n)#{2,4}\\s+/m.test(text),
+            hasRawFence: /```/.test(text),
+            hasDuplicateOrderedMarker: /(^|\\n)\\s*\\d+[.)]\\s+\\d+[.)]\\s+/m.test(text),
+            tableCount: note ? note.querySelectorAll('table').length : 0,
+            codeBlockCount: note ? note.querySelectorAll('pre code').length : 0,
             card: rect(card),
             panel: rect(panel),
             action: rect(action),
@@ -143,6 +148,16 @@ def assert_layout(name: str, metrics: dict) -> list[str]:
         failures.append(f"{name}: frontmatter is visible")
     if metrics["hasLocalPath"]:
         failures.append(f"{name}: local filesystem path is visible")
+    if metrics["hasRawHeadingMarker"]:
+        failures.append(f"{name}: markdown heading marker is visible")
+    if metrics["hasRawFence"]:
+        failures.append(f"{name}: markdown code fence is visible")
+    if metrics["hasDuplicateOrderedMarker"]:
+        failures.append(f"{name}: duplicate ordered-list marker is visible")
+    if metrics["tableCount"] < 1:
+        failures.append(f"{name}: markdown table was not rendered")
+    if metrics["codeBlockCount"] < 1:
+        failures.append(f"{name}: markdown code block was not rendered")
     for key in ("card", "panel", "action"):
         rect = metrics[key]
         if rect and rect["right"] > viewport_width + 1:

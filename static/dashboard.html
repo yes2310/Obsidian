@@ -682,7 +682,8 @@
 
     .note-content h1,
     .note-content h2,
-    .note-content h3 {
+    .note-content h3,
+    .note-content h4 {
       line-height: 1.25;
       margin: 22px 0 10px;
     }
@@ -690,9 +691,28 @@
     .note-content h1 { font-size: 24px; }
     .note-content h2 { font-size: 20px; }
     .note-content h3 { font-size: 17px; }
+    .note-content h4 {
+      font-size: 15px;
+      color: var(--text-subtle);
+    }
 
     .note-content p {
       margin: 10px 0;
+    }
+
+    .note-content blockquote {
+      margin: 12px 0 18px;
+      padding: 10px 12px;
+      border-left: 3px solid var(--line-strong);
+      border-radius: 0 var(--radius) var(--radius) 0;
+      background: var(--surface-soft);
+      color: var(--text-subtle);
+    }
+
+    .note-content hr {
+      border: 0;
+      border-top: 1px solid var(--line);
+      margin: 18px 0;
     }
 
     .note-content hr:first-child {
@@ -704,7 +724,7 @@
       max-width: 100%;
       overflow-x: auto;
       border-collapse: collapse;
-      white-space: nowrap;
+      white-space: normal;
     }
 
     .note-content th,
@@ -736,8 +756,16 @@
       overflow: auto;
       border-radius: var(--radius);
       background: #eef2f7;
-      white-space: pre-wrap;
-      word-break: break-word;
+      white-space: pre;
+    }
+
+    .note-content pre code {
+      display: block;
+      padding: 0;
+      background: transparent;
+      color: var(--text);
+      white-space: pre;
+      line-height: 1.65;
     }
 
     .files-row {
@@ -1107,7 +1135,7 @@
       const text = String(markdown || "").replace(/^\uFEFF/, "");
       const lines = text.split(/\r?\n/);
       const result = [];
-      const metadataKey = /^(created|updated|id|category|status|tags|related|summary|importance|context|source|llm_model|transcript_json|transcript_txt|transcript_srt)\s*:/m;
+      const metadataKey = /^(created|updated|id|type|project|category|status|tags|related|summary|importance|context|source|generated_by|review_required|llm_model|transcript_json|transcript_txt|transcript_srt)\s*:/m;
 
       for (let i = 0; i < lines.length; i += 1) {
         if (lines[i].trim() !== "---") {
@@ -1141,11 +1169,181 @@
       return result.join("\n").trimStart();
     }
 
+    function sanitizeHTML(html) {
+      return String(html)
+        .replace(/<\/?(script|style|iframe|object|embed)[^>]*>/gi, "")
+        .replace(/\son\w+="[^"]*"/gi, "")
+        .replace(/\son\w+='[^']*'/gi, "")
+        .replace(/javascript:/gi, "");
+    }
+
+    function renderInlineMarkdown(text) {
+      const codeValues = [];
+      let safe = escapeHtml(text).replace(/`([^`]+)`/g, (_, code) => {
+        const index = codeValues.push(code) - 1;
+        return `@@CODE_${index}@@`;
+      });
+      safe = safe
+        .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+        .replace(/\[\[([^\]]+)\]\]/g, "<code>$1</code>");
+      codeValues.forEach((code, index) => {
+        safe = safe.replaceAll(`@@CODE_${index}@@`, `<code>${code}</code>`);
+      });
+      return safe;
+    }
+
+    function splitMarkdownRow(row) {
+      const cells = [];
+      let cell = "";
+      let escaped = false;
+      for (const char of row.replace(/^\||\|$/g, "")) {
+        if (escaped) {
+          cell += char === "|" ? "|" : `\\${char}`;
+          escaped = false;
+          continue;
+        }
+        if (char === "\\") {
+          escaped = true;
+          continue;
+        }
+        if (char === "|") {
+          cells.push(cell.trim());
+          cell = "";
+          continue;
+        }
+        cell += char;
+      }
+      if (escaped) cell += "\\";
+      cells.push(cell.trim());
+      return cells;
+    }
+
+    function renderTable(lines, start) {
+      const rows = [];
+      let index = start;
+      while (index < lines.length && lines[index].trim().startsWith("|")) {
+        rows.push(lines[index].trim());
+        index += 1;
+      }
+      const parsed = rows
+        .filter(row => !/^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/.test(row))
+        .map(row => splitMarkdownRow(row).map(cell => renderInlineMarkdown(cell)));
+      if (!parsed.length) return {html: "", next: index};
+      const [head, ...bodyRows] = parsed;
+      const thead = `<thead><tr>${head.map(cell => `<th>${cell}</th>`).join("")}</tr></thead>`;
+      const tbody = `<tbody>${bodyRows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody>`;
+      return {html: `<table>${thead}${tbody}</table>`, next: index};
+    }
+
+    function renderBasicMarkdown(markdown) {
+      const lines = String(markdown || "").split("\n");
+      const blocks = [];
+      let index = 0;
+      const isHeading = value => /^#{1,4}\s+/.test(value);
+      const isFence = value => /^```/.test(value);
+      const isHr = value => /^-{3,}$/.test(value);
+      const isUnordered = value => /^[-*]\s+/.test(value);
+      const isOrdered = value => /^\d+[.)]\s+/.test(value);
+      const startsSpecialBlock = value => (
+        isHeading(value)
+        || isFence(value)
+        || isHr(value)
+        || isUnordered(value)
+        || isOrdered(value)
+        || value.startsWith("|")
+        || value.startsWith(">")
+      );
+
+      while (index < lines.length) {
+        const line = lines[index].trim();
+        if (!line) {
+          index += 1;
+          continue;
+        }
+        if (isFence(line)) {
+          const language = line.replace(/^```/, "").trim();
+          const codeLines = [];
+          index += 1;
+          while (index < lines.length && !isFence(lines[index].trim())) {
+            codeLines.push(lines[index]);
+            index += 1;
+          }
+          if (index < lines.length) index += 1;
+          const className = language ? ` class="language-${escapeAttr(language)}"` : "";
+          blocks.push(`<pre><code${className}>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
+          continue;
+        }
+        if (isHr(line)) {
+          blocks.push("<hr>");
+          index += 1;
+          continue;
+        }
+        if (line.startsWith("|") && index + 1 < lines.length && lines[index + 1].includes("---")) {
+          const table = renderTable(lines, index);
+          if (table.html) blocks.push(table.html);
+          index = table.next;
+          continue;
+        }
+        const heading = line.match(/^(#{1,4})\s+(.+)$/);
+        if (heading) {
+          const level = heading[1].length;
+          blocks.push(`<h${level}>${renderInlineMarkdown(heading[2].trim())}</h${level}>`);
+          index += 1;
+          continue;
+        }
+        if (line.startsWith(">")) {
+          const quoteLines = [];
+          while (index < lines.length && lines[index].trim().startsWith(">")) {
+            quoteLines.push(renderInlineMarkdown(lines[index].trim().replace(/^>\s*/, "")));
+            index += 1;
+          }
+          blocks.push(`<blockquote>${quoteLines.join("<br>")}</blockquote>`);
+          continue;
+        }
+        if (isUnordered(line)) {
+          const items = [];
+          while (index < lines.length && isUnordered(lines[index].trim())) {
+            items.push(`<li>${renderInlineMarkdown(lines[index].trim().replace(/^[-*]\s+/, ""))}</li>`);
+            index += 1;
+          }
+          blocks.push(`<ul>${items.join("")}</ul>`);
+          continue;
+        }
+        if (isOrdered(line)) {
+          const items = [];
+          while (index < lines.length && isOrdered(lines[index].trim())) {
+            const match = lines[index].trim().match(/^(\d+)[.)]\s+(.+)$/);
+            let itemText = match ? match[2] : lines[index].trim().replace(/^\d+[.)]\s+/, "");
+            if (match) itemText = itemText.replace(new RegExp(`^${match[1]}[.)]\\\\s+`), "");
+            items.push(`<li>${renderInlineMarkdown(itemText)}</li>`);
+            index += 1;
+          }
+          blocks.push(`<ol>${items.join("")}</ol>`);
+          continue;
+        }
+        const paragraph = [line];
+        index += 1;
+        while (index < lines.length && lines[index].trim() && !startsSpecialBlock(lines[index].trim())) {
+          paragraph.push(lines[index].trim());
+          index += 1;
+        }
+        blocks.push(`<p>${renderInlineMarkdown(paragraph.join(" "))}</p>`);
+      }
+      return blocks.join("");
+    }
+
+    function normalizeMarkdownForPreview(markdown) {
+      return String(markdown || "").replace(/^(\s*\d+[.)]\s+)(\d+)[.)]\s+/gm, (full, prefix, repeated) => {
+        const current = prefix.match(/\d+/);
+        return current && current[0] === repeated ? prefix : full;
+      });
+    }
+
     function renderMarkdown(markdown) {
-      const content = stripMetadataBlocks(markdown)
+      const content = normalizeMarkdownForPreview(stripMetadataBlocks(markdown)
         .replace(/(^|\n)##\s*(Transcript|원문 파일)\s*\n[\s\S]*?(?=\n##\s+|$)/gi, "\n")
-        .trimStart();
-      return window.marked ? window.marked.parse(content) : `<pre>${escapeHtml(content)}</pre>`;
+        .trimStart());
+      return window.marked ? sanitizeHTML(window.marked.parse(content)) : renderBasicMarkdown(content);
     }
 
     function formatBytes(bytes) {

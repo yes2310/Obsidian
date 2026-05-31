@@ -969,6 +969,7 @@ def _as_numbered(item: Any) -> str:
             text = " - ".join(str(v).strip() for v in value.values() if str(v).strip())
         else:
             text = str(value).strip()
+        text = re.sub(r"^\d+[\).]\s+", "", text)
         if text:
             lines.append(f"{idx}. {text}")
     return "\n".join(lines)
