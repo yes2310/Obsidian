@@ -1103,14 +1103,48 @@
       return escapeHtml(value).replace(/"/g, "&quot;");
     }
 
-    function stripFrontmatter(markdown) {
+    function stripMetadataBlocks(markdown) {
       const text = String(markdown || "").replace(/^\uFEFF/, "");
-      const match = text.match(/^---\s*\n[\s\S]*?\n---\s*(?:\n|$)/);
-      return match ? text.slice(match[0].length).trimStart() : text;
+      const lines = text.split(/\r?\n/);
+      const result = [];
+      const metadataKey = /^(created|updated|id|category|status|tags|related|summary|importance|context|source|llm_model|transcript_json|transcript_txt|transcript_srt)\s*:/m;
+
+      for (let i = 0; i < lines.length; i += 1) {
+        if (lines[i].trim() !== "---") {
+          result.push(lines[i]);
+          continue;
+        }
+
+        let end = -1;
+        for (let j = i + 1; j < lines.length; j += 1) {
+          if (lines[j].trim() === "---") {
+            end = j;
+            break;
+          }
+        }
+
+        if (end === -1) {
+          result.push(lines[i]);
+          continue;
+        }
+
+        const block = lines.slice(i + 1, end).join("\n");
+        if (metadataKey.test(block)) {
+          i = end;
+          continue;
+        }
+
+        result.push(...lines.slice(i, end + 1));
+        i = end;
+      }
+
+      return result.join("\n").trimStart();
     }
 
     function renderMarkdown(markdown) {
-      const content = stripFrontmatter(markdown);
+      const content = stripMetadataBlocks(markdown)
+        .replace(/(^|\n)##\s*(Transcript|원문 파일)\s*\n[\s\S]*?(?=\n##\s+|$)/gi, "\n")
+        .trimStart();
       return window.marked ? window.marked.parse(content) : `<pre>${escapeHtml(content)}</pre>`;
     }
 

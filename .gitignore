@@ -8,6 +8,7 @@ __pycache__/
 *.log
 *.pdf
 logs/
+artifacts/
 ollama.log
 jobs.db
 *.db-shm

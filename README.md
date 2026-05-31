@@ -34,6 +34,14 @@ scripts/run.sh
 scripts/check.sh
 ```
 
+브라우저 레이아웃까지 검증하려면 Playwright 브라우저를 설치한 뒤 실행합니다.
+
+```bash
+.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/python -m playwright install chromium
+.venv/bin/python scripts/visual_check.py
+```
+
 수동으로 나눠 실행해야 할 때:
 
 ```bash
