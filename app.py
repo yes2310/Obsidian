@@ -694,14 +694,19 @@ def call_chatmock_summarize(text: str, rules: Optional[str] = None, model: Optio
         "내용이 불명확하면 추측하지 말고 전사 불명확 또는 확인 필요라고 명시하라. "
         "필드는 title, scope, overview, flow, sections, concept_tables, comparison_tables, final_summary, "
         "review_questions, unclear_parts, action_items, category, tags, related, context, importance 를 사용하라. "
-        "overview는 강의 전체를 3~6개 문단으로 설명하고, flow는 강의 전개 순서를 번호 목록으로 만들 수 있게 배열로 작성하라. "
-        "sections는 강의 단원별 객체 배열이며 title, intro, body, tables, formulas, code_blocks, examples, process, takeaways를 포함하라. "
-        "각 section의 body는 가능한 한 2개 이상의 문단형 설명으로 작성하고 한 줄 bullet 나열을 피하라. "
+        "최종 Markdown 구조는 # 강의 제목 아래에 반드시 1. 강의 전체 개요, 2. 핵심 개념 요약, 3. 배경 지식, "
+        "4. 주요 개념 상세 정리, 5. 동작 원리, 6. 예시와 직관적 설명, 7. 헷갈리기 쉬운 부분, "
+        "8. 기존 방식과의 비교, 9. 실무/응용 관점에서의 의미, 10. 전체 요약, 11. 암기 포인트, "
+        "12. 복습 질문, 13. 한 문장 요약 순서로 보이게 하라. "
+        "overview와 flow는 빈 값으로 두고, 위 13개 제목과 순서를 sections에 모두 작성하라. "
+        "sections는 title, intro, body, tables, formulas, code_blocks, examples, process, takeaways를 포함하라. "
+        "각 section의 body는 가능한 한 여러 문단의 강의 노트형 설명으로 작성하고 한 줄 bullet 나열을 피하라. "
+        "중요 개념은 정의, 왜 필요한가, 어떻게 동작하는가, 예시, 주의할 점 순서로 설명하라. "
         "tables는 용어, 기호, 모델 비교, 단계 구분처럼 표가 자연스러운 내용에 사용하라. "
         "formulas와 code_blocks는 전사문에 수식, 계산식, 코드, 모델 구조, 계층 흐름이 있을 때만 작성하라. "
         "examples는 전사문에 나온 예시만 사용하라. concept_tables와 comparison_tables는 title, columns, rows 구조로 작성하라. "
-        "final_summary는 반드시 기억할 내용을 배열로, review_questions는 question/answer 객체 5~8개로 작성하라. "
-        "unclear_parts는 없으면 빈 배열로 두고, action_items는 복습할 개념이나 확인할 전사 구간 중심으로 작성하라. "
+        "전체 요약, 암기 포인트, 복습 질문은 sections의 10~12번에 작성하고 final_summary, review_questions, action_items는 기본적으로 빈 배열로 두어 중복을 피하라. "
+        "unclear_parts는 없으면 빈 배열로 두라. "
         "category는 study를 기본값으로 사용하되 ai, research, project, thesis, resources, memo, daily 중 더 적절하면 선택하라."
     )
     system_prompt = f"{system_prompt}\n\n{schema_instruction}"
@@ -848,9 +853,10 @@ def call_chatmock_summarize(text: str, rules: Optional[str] = None, model: Optio
             {
                 "role": "user",
                 "content": (
-                    "다음 전사문을 Notion에 붙여넣기 쉬운 교재형 강의 요점정리 노트로 아주 자세히 구조화하라. "
-                    "전체 흐름, 단원별 문단 설명, 표, 수식/코드블록, 예시, 마지막 정리를 포함하되 "
-                    "전사문에 없는 내용은 절대 추가하지 말고, 원문의 용어와 수치를 보존하라.\n\n"
+                    "다음 전사문을 시험 공부나 복습에 바로 사용할 수 있는 Markdown 학습 노트로 아주 자세히 구조화하라. "
+                    "강의자의 잡담과 반복 표현은 제거하되 강조한 핵심 메시지는 보존하라. "
+                    "최종 Markdown은 반드시 1. 강의 전체 개요부터 13. 한 문장 요약까지의 고정 구조를 따르게 하라. "
+                    "전사문에 없는 내용은 절대 추가하지 말고, 원문의 용어와 수치, 수식, 모델명을 보존하라.\n\n"
                     f"{text}"
                 ),
             },
